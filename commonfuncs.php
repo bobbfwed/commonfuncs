@@ -605,6 +605,92 @@ CREATE TABLE IF NOT EXISTS `errors` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COMMENT='Keep track of errors on the site' AUTO_INCREMENT=1 ;
 */
 
+
+/*******************************************************************************
+* PDO Database connection                                                      *
+********************************************************************************
+* connect ($db = false, $un = false, $pw = false, $host = false, $type = false) *
+* myquery ($query, $line)                                                      *
+* prepNoRetQuery ($query, $values_ar, $line)                                   *
+* prepRetQuery ($query, $values_ar, $line)                                     *
+*******************************************************************************/
+class db_connect {
+
+// Connect using this code:
+//$db = new db_connect;
+//$db->connect('dbname', 'username', 'password');
+
+  public $db_user, $db_pw, $db_name, $db_host, $db_type;
+  $db_host = 'localhost';
+  $db_type = 'mysql';
+  public $conn;
+
+  function connect ($db = false, $un = false, $pw = false, $host = false, $type = false) {
+    if ($un)
+      $this->db_user = $un;
+    if ($pw)
+      $this->db_pw = $pw;
+    if ($db)
+      $this->db_name = $db;
+    if ($host)
+      $this->db_host = $host;
+    if ($type)
+      $this->db_type = $type;
+  
+    try {
+      $this->conn = new PDO($this->db_type . ':host=' . $this->db_host . ';dbname=' . $this->db_name, $this->db_user, $this->db_pw);
+      $this->conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+      
+      return $this->conn;
+    } catch (PDOException $e) {
+      if ($_SERVER['REMOTE_ADDR'] == 'your ip')
+        echo 'Error:' . $e->getMessage();
+      else
+        mail('youremail@gmail.com', 'DB Connection Failed', 'DB Connection Failed -- Check it out.'."\r\n".'Error: ' . $e);
+    }
+  }
+  
+  function myquery ($query, $line) {
+    $results = $this->conn->query($query, PDO::FETCH_OBJ);
+
+    if ($results) {
+      foreach($results as $row)
+        $ret[] = $row;
+      return $ret;
+    }
+    return false;
+  }
+  
+  function prepNoRetQuery ($query, $values_ar, $line) {
+    $stmt = $this->conn->prepare($query);
+    $stmt->setFetchMode(PDO::FETCH_OBJ);
+
+    if ($values_ar !== false)
+      $stmt->execute($values_ar);
+    else
+      $stmt->execute();
+  }
+
+  function prepRetQuery ($query, $values_ar, $line) {
+    $stmt = $this->conn->prepare($query);
+    $stmt->setFetchMode(PDO::FETCH_OBJ);
+
+    if ($values_ar !== false)
+      $stmt->execute($values_ar);
+    else
+      $stmt->execute();
+
+    // or: $stmt->bindParam(':name', $var, PDO::PARAM_INT);
+    // then: $stmt->execute();
+    
+    $ret = $stmt->fetchAll();
+
+    return ($ret ? $ret : false);
+  
+  }
+  
+}
+
 /*******************************************************************************
 * Common file information or manipulation functions.                           *
 ********************************************************************************
@@ -1093,6 +1179,7 @@ class login extends sql {
 
   // checks session data or post information against database login information
   // returns false on failure or user's id if successful
+  // need to create random seeding for users
   function logintest () {
 
     //$GLOBALS['disp_login'] = true;
@@ -1204,6 +1291,8 @@ class login extends sql {
 
   // create a user, add it to the database, return id on success, return false on failure
   function create_user ($user, $email, $pass, $groupid, $emailconfirm = '1') {
+    // need to create random seeding for users
+    
     $user = $this->username_filter(@substr(trim($user), 0, 32)); // clean up user
     $pw = sha1($this->SHA1_SEED1.@substr($pass, 0, 128).$this->SHA1_SEED2);
     $query = 'SELECT deleted FROM '.$this->TABLE_PREFIX.'users WHERE LOWER(user) = "'.mysql_real_escape_string(strtolower($user)).'"';
