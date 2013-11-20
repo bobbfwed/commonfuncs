@@ -620,10 +620,9 @@ class db_connect {
 //$db = new db_connect;
 //$db->connect('dbname', 'username', 'password');
 
-  public $db_user, $db_pw, $db_name, $db_host, $db_type;
-  $db_host = 'localhost';
-  $db_type = 'mysql';
-  public $conn;
+  public $db_user, $db_pw, $db_name, $conn;
+  public $db_host = 'localhost'; // default host
+  public $db_type = 'mysql';     // default db type
 
   function connect ($db = false, $un = false, $pw = false, $host = false, $type = false) {
     if ($un)
@@ -643,10 +642,10 @@ class db_connect {
       
       return $this->conn;
     } catch (PDOException $e) {
-      if ($_SERVER['REMOTE_ADDR'] == 'your ip')
+      if ($_SERVER['REMOTE_ADDR'] == 'developer ip')
         echo 'Error:' . $e->getMessage();
       else
-        mail('youremail@gmail.com', 'DB Connection Failed', 'DB Connection Failed -- Check it out.'."\r\n".'Error: ' . $e);
+        mail('youremail', 'DB Connection Failed', 'DB Connection Failed -- Check it out.'."\r\n".'Error: ' . $e);
     }
   }
   
