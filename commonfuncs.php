@@ -526,35 +526,25 @@ function password_strength (password, minlength) {
   }
 
   // returns an array with $size values [kindof] evenly distributed from $arr
+  // expects a contiguously indexed array starting at index 0 to be passed to $arr
   function even_dist_arr ($arr, $size) {
     if (!is_array($arr))
       return false;
   
     if ($size < 2)
-      return false;
-  
-    if (count($arr) < 2)
       return array($arr[0]);
-  
-    if (count($arr) <= $size)
+    
+    if (count($arr) < 2 || ($orig_size = count($arr)) <= $size)
       return $arr;
   
-    if ($size / count($arr) <= 0.5)
-      $size--;
+    $dif = $orig_size / ($size - 1);
   
-    $dif = $size / count($arr);
+    $j = 0;
+    for ($i = 0; $i < $orig_size; $i += $dif)
+      $newarr[$j++] = $arr[floor($i)];
     
-    $newarr = array($arr[0]);
-    $idx = $dif;
-    for ($i = 1; $i < count($arr) - 1; $i++) {
-      if ($idx >= 1) {
-        $newarr[] = $arr[$i];
-        $idx -= 1;
-      }
-      $idx += $dif;
-    }
-    $newarr[] = $arr[count($arr) - 1];
-    
+    $newarr[$size - 1] = $arr[$orig_size - 1];
+  
     return $newarr;
   }
 
