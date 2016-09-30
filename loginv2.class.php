@@ -1,8 +1,8 @@
 <?PHP
 /***** LOGIN V2 *****************************************************************
  *                                                                              *
- * Version: 2.0.2                                                               *
- * Date: September 28, 2016                                                     *
+ * Version: 2.0.3                                                               *
+ * Date: September 30, 2016                                                     *
  *                                                                              *
  * Requires PHP 5.5 or higher with OpenSSL extenion, or PHP 7.0 or higher.      *
  *                                                                              *
@@ -116,21 +116,21 @@ declare(strict_types=1);
 
 class loginv2 {
 
-  protected $userinfovals = array(
+  protected $userinfovals = [
       'loggedin' => false,                  // current user's login status - true if logged in false if not
       'userid' => false,                    // current user's id... false if not logged in
       'username' => false,                  // current user's username... false if not logged in
       'seclevel' => false,                  // current user's security level... false if not logged in
       'token' => false,                     // current user's login token - used for session-based or token-only logins - a HASH_LENGTH-size case-sensetive string if logged in, false if not
       'tokenexpires' => false               // time the current user's login token should expire -- it could change (in theory) if the $config settings are changed after the class is initialized
-    );
+    ];
 
   protected $db;                            // store reference to database
-  protected $error_ar = array();            // track errors as they occur, so they can be returned
+  protected $error_ar = [];                 // track errors as they occur, so they can be returned
   protected $token_global;                  // holds reference to the array for which the token value is searched through
   protected $userpw_global;                 // holds reference to the array for which the username and password values are searched through
 
-  protected $config = array(
+  protected $config = [
       'login_expires' => 36000,             // how long each login is valid for - default: 10 hours
 
       'use_session' => true,                // intialize and utilize session data -- this probably should only be disabled if this is used in an API setup
@@ -139,13 +139,13 @@ class loginv2 {
 
       'token_global' => 'REQUEST',          // can be set as 'REQUEST', 'GET', 'POST', 'SESSION', or 'COOKIE' -- limits the scope of valid input, to increase security a bit, or allow the use of externally controlled sessions or cookies (using cookies for this is probably a bad idea) -- if set to SESSION, a session is started even if use_session is disabled, but none of the other session features will work if use_session is disabled
       'token_only_allowed' => false,        // allow users to login with their token only (useful for APIs) - slightly less secure if enabled, but for most purposes, acceptibly so
-      'token_key' => 'loginv2token',        // token key is searched for in the $token_global defined scope, it holds the user's token, from which the rest of their information is derived
+      'token_key' => 'loginv2token',        // this key is searched for in the $config['token_global'] defined scope, it holds the user's token -- basically, it's the variable's name that will be submitted containing the verification token
 
       'username_max_length' => 20,          // maximum length a username can be (after invalid characters have been removed -- valid: A-Z, a-z, 0-9, _ ) -- length limit should be included in input form
       'username_min_length' => 3,           // minimum length a username can be (after invalid characters have been removed -- valid: A-Z, a-z, 0-9, _ )
 
-      'password_max_length' => 72,          // maximum length an inputted password can be, any longer than this, and the input is truncated, shortening this only reduces your overall security -- This limit is determined by BCRYPT / Blowfish, the function truncates the password to 72 characters
-      'password_min_length' => 8,           // minimum length an inputted password can be -- length is only a part of password securtiy and a very low value can be used if password_strength_test is enabled and password_min_strength is a sufficiently high value (will force a minimum length to an extent anyway)
+      'password_max_length' => 72,          // maximum length an inputted password can be, any longer than this, and the input is truncated, shortening this only reduces your overall security -- this limit is determined by BCRYPT / Blowfish, the function truncates passwords to 72 characters
+      'password_min_length' => 8,           // minimum length an inputted password can be -- length is only a part of password securtiy and a short length can be used if password_strength_test is enabled and password_min_strength is a sufficiently high value (will force a minimum length to an extent anyway)
       'password_strength_test' => true,     // do a basic check on password for strength
       'password_min_strength' => 18000,     // minimum allowable strength for a password to be valid -- this value is the approximate number of seconds to brute force match the password - 18000 = 300 minutes - 5 hours -- higher is better in a logarithmic way 20000 is only slightly better than 2000 and so on
 
@@ -153,43 +153,45 @@ class loginv2 {
       'username_key' => 'user',             // key in $userpw_global that has the username
       'password_key' => 'pw',               // key in $userpw_global that has the password
 
-      'def_seclevel' => 8,                  // default security level (used during user creation)
+      'def_seclevel' => 8,                  // default security level (used during user creation) -- an abatrary number usually used for indicating security distinctions between normal users, moderators, admins, etc. (a recommended system: 1 = super admin, 2 = admin, 4 = moderator, 6 = special user, 8 = standard user)
 
-      'badlogin_timeout' => 300,            // amount of seconds bad logings are relevent (default 5 minutes)
-      'badlogin_limit' => 5,                // the number of bad logins before lockout
+      'badlogin_timeout' => 300,            // amount of seconds unsuccessful logings are relevent (default 5 minutes)
+      'badlogin_limit' => 5,                // the number of unsuccessful logins before lockout
 
       'user_table' => 'sec_users',          // table to store user information
-      'badlogin_table' => 'sec_badlogin',   // table to store bad login information
+      'badlogin_table' => 'sec_badlogin',   // table to store unsuccessful logins
       'ip_table' => 'sec_iplist',           // table for white and blacklisted IPs
 
       'dateformat' => 'F j, Y',             // date() format -- not yet used
       'datetimeformat' => 'F j, Y g:i',     // date() format -- only used (so far) in an error message in check_user_password() method
 
+      'cost_for_pw_hash' => 9,              // the higher the number, the more time it takes to create a password hash and verify it (only used during user login and user creation) -- once a password is created at this cost, it cannot be [easily] changed unless the user changes their password
+      'cost_for_ses_hash' => 6,             // the higher the number, the more time it takes to create a session hash (during initial login) (session hashes are never verified against a user input, rather they are created as short term keys at login to verify the user has already logged in, i.e. the value is only ever compared against a stored value in the database, thus the cost is not a significant factor with regards to security)
+      // Cost timing from my test server (faster servers should have higher costs)
+      // Cost: seconds to hash (same amount of time to check hash)
+      //  < 4: FAILS
+      //    4: 0.0021
+      //    6: 0.0074
+      //    8: 0.0288
+      //    9: 0.0574 (0.05s is the recommended de-hashing time for a high-traffic production server)
+      //   10: 0.1142
+      //   11: 0.2280
+      //   12: 0.4558
+      //   13: 0.9114
+      //   14: 1.8225
+      //   15: 3.6451
+      //   16: 7.2901
+      // Each increase in cost approximately doubles the time
+
       // deveolopment settings
-      'destroy_session_if_failed' => true,
-      'add_bad_login_if_failed' => true
-    );
+      'destroy_session_if_failed' => true,  // if a login fails, should the session be destroyed? -- should never be disabled on a production server, but good for testing if you are having problems with session data going missing during login attempts
+      'add_bad_login_if_failed' => true     // if a login fails, should it logged? -- should never be disabled on a production server
+    ];
 
-  const HASH_LENGTH = 60;                   // the length of the hash generated (used for password length and token length)
+  const HASH_LENGTH = 60;                   // the length of the hash generated (used for password length and token length) - 60 characters is the output length of BCRYPT / Blowfish hashing
   const IP_LENGTH = 15;                     // the length limit of IPs in the database (will need to be 45 for IPv6)
-  const COST_FOR_PW_HASH = 12;              // this could be bumped up, the higher the number, the more time it takes to hash a password, and verify it (only used during login) (could probably be put into the config) -- COSTS LESS THAN 4 DO NOT WORK, COSTS HIGHER THAN 13 TAKE A LONG TIME TO HASH AND CHECK
-  const COST_FOR_SES_HASH = 10;             // the higher the number, the more time it takes to hash a password, and verify it (could probably be put into the config) -- COSTS LESS THAN 4 DO NOT WORK, COSTS HIGHER THAN 13 TAKE A LONG TIME TO HASH AND CHECK
-    // Cost results from my test server
-    // Cost: seconds to hash (same amount of time to check hash)
-    //  < 4: No result
-    //    4: 0.0021
-    //    6: 0.0074
-    //    8: 0.0288
-    //   10: 0.1142
-    //   11: 0.2280
-    //   12: 0.4558
-    //   13: 0.9114
-    //   14: 1.8225
-    //   15: 3.6451
-    //   16: 7.2901
-    // Each approximately doubles the previous cost
 
-  // Values used for when a "bad login" is logged. !! DO NOT CHANGE !!
+  // Values used for when an unsuccessful login is logged. !! DO NOT CHANGE !!
   const BAD_USER = 1;
   const BAD_PW = 2;
   const BAD_SESSION = 3;
@@ -203,12 +205,18 @@ class loginv2 {
 
   // initialize class, $db is PDO databse connection, $config is settings to change (if you need)
   // configurations should be setup during initialization for best results, changing some settings after initialization are undocumented (but sometimes useful)
-  public function __construct (pdo &$db, $config = false) {
+  public function __construct (pdo &$db, array $config = []) {
 
     $this->db = &$db;                                                           // assign active database
 
-    if (is_array($config))                                                      // if there are settings to be set (this isn't a full check, but it's not necessary here)
+    if (count($config) > 0)                                                     // if there are settings to be set (this isn't a full check, but it's not necessary here)
       $this->settings($config);                                                 // doesn't check any returns, so be sure $config array is formatted correctly
+
+    if ($this->config['cost_for_pw_hash'] < 4)                                  // costs less than 4 don't produce an output, and could cause serious security risks
+      $this->config['cost_for_pw_hash'] = 4;
+
+    if ($this->config['cost_for_ses_hash'] < 4)                                 // costs less than 4 don't produce an output, and could cause serious security risks
+      $this->config['cost_for_ses_hash'] = 4;
 
     // !!! A session is started regardless of use_session config setting if either global is set to SESSION -- but none of the other session features will work if use_session is disabled !!!
     if (session_id() === '' && ($this->config['use_session'] || strtoupper($this->config['token_global']) == 'SESSION' || strtoupper($this->config['userpw_global']) == 'SESSION')) {
@@ -244,7 +252,7 @@ class loginv2 {
 
         if ($this->is_assoc($config)) {                                         // set multiple values of config using array ('setting_name' => new_value)
 
-          $ret_ar = array();
+          $ret_ar = [];
 
           foreach ($config as $setting => $setvalue) {
 
@@ -262,7 +270,7 @@ class loginv2 {
 
         } else {                                                                // get multiple values of config using array ('setting_name1', 'setting_name2')
 
-          $ret_ar = array();
+          $ret_ar = [];
 
           for ($i = 0; $i < count($config); $i++) {
 
@@ -284,7 +292,7 @@ class loginv2 {
     } elseif ($value === NULL) {                                                // get single value of a setting in config
 
       if (isset($this->config[$config]))                                        // make sure the setting exists
-        return $this->return_values(true, array($config => $this->config[$config]));
+        return $this->return_values(true, [$config => $this->config[$config]]);
 
       else {
 
@@ -298,7 +306,7 @@ class loginv2 {
       if (isset($this->config[$config])) {
 
         $this->config[$config] = $value;                                        // set setting
-        return $this->return_values(true, array($config => $value));
+        return $this->return_values(true, [$config => $value]);
 
       } else {
 
@@ -372,7 +380,7 @@ class loginv2 {
 
     }
 
-    if ($this->config['destroy_session_if_failed'])
+    if ($this->config['destroy_session_if_failed'])                             // developer option
       $this->session_destroy();
 
     return $this->return_values(false);
@@ -404,12 +412,12 @@ class loginv2 {
             if (trim($token) && $tokendate + $this->config['login_expires'] > time()) { // test if token is valid
 
               $this->log_user_in_from_db($id);                                  // log user in
-              return $this->return_values(true, array($this->config['token_key'] => $token)); // return token for future log ins
+              return $this->return_values(true, [$this->config['token_key'] => $token]); // return token for future log ins
 
             } elseif ($log_user_in_if_not_already) {
 
               $this->register_new_login($id);                                   // generate new token for user and log user in
-              return $this->return_values(true, array($this->config['token_key'] => $this->userinfovals['token'])); // return token for future log ins
+              return $this->return_values(true, [$this->config['token_key'] => $this->userinfovals['token']]); // return token for future log ins
 
             } else
               $this->error_ar[] = 'No valid token available.';
@@ -433,7 +441,7 @@ class loginv2 {
   // can be used like this: if ($loginv2->userinfo()['loggedin']) { ... }
   // or like this: if ($loginv2->userinfo('loggedin')) { ... }
   // this is the only public method that breaks the rule about returned values, only because it is probably the most used method, so simplicity is healthy for cycles and memory
-  public function userinfo ($info = false) {
+  public function userinfo (string $info = '') {
 
     if ($info && isset($this->userinfovals[$info]))                             // if a specific bit of information is requested
       return $this->userinfovals[$info];                                        // only return the value (doesn't return anything else)
@@ -458,26 +466,24 @@ class loginv2 {
   // checks to see if username is unique then creates row with username and hashed password
   // it is up to the developer using this to insert any other relavent information about the user into the row
   // $seclevel is optional, it can contain the user's security level (can be used for permission levels), false uses the default value set in config
+  // $wait_for_approval sets if an admin has to approve the user before they can log in
   // $additional_fields is an optional associative array of fields and values to insert if user creation was successful -- structure as follows:
   //   array(
   //     'your_field' => array (
   //       'value' => value,
-  //       'PDOtype' => PDO::PARAM_XXX, // use PDO constants
-  //       'length' => XX               // if PDOType == PDO::PARAM_STR, then this should be an integer value, otherwise, it will be ignored
+  //       'PDOtype' => PDO::PARAM_XXX  // use PDO constants
   //     )
   //   )
-  // $wait_for_approval sets if an admin has to approve the user before they can log in
   // returns new user's id number if successful, false if it failed (will also populate error array)
-  public function create_user (string $user, string $pw, $seclevel = false, $additional_fields = false, bool $wait_for_approval = true): array {
+  public function create_user (string $user, string $pw, int $seclevel = -1, bool $wait_for_approval = false, array $additional_fields = []): array {
 
-    if ($seclevel === false)
+    if ($seclevel === -1)
       $seclevel = $this->config['def_seclevel'];
 
     $user = $this->clean_username($user);                                       // clean username
     $pw = substr($pw, 0, $this->config['password_max_length']);                 // clean password (kinda)
 
-    // check user min length
-    if (strlen($user) < $this->config['username_min_length']) {
+    if (strlen($user) < $this->config['username_min_length']) {                 // check user min length
 
       $this->error_ar[] = 'The username is too short. It must be at least ' . $this->config['username_min_length'] . ' valid characters long.<br>' .
                           'Valid characters include upper and lowercase letters, numbers, and underscores ( "_" ).';
@@ -485,45 +491,40 @@ class loginv2 {
 
     }
 
-    // check user max length
-    if (strlen($user) > $this->config['username_max_length']) {
+    if (strlen($user) > $this->config['username_max_length']) {                 // check user max length
 
       $this->error_ar[] = 'The username is too long. It must be at most ' . $this->config['username_max_length'] . ' characters long.';
       return $this->return_values(false);
 
     }
 
-    // check to see if username is unique
-    if ($this->check_user_exists($user)) {
+    if ($this->check_user_exists($user)) {                                      // check to see if username is unique
 
       $this->error_ar[] = 'A user with that name already exists.';
       return $this->return_values(false);
 
     }
 
-    // check password length
-    if (strlen($pw) < $this->config['password_min_length']) {
+    if (strlen($pw) < $this->config['password_min_length']) {                   // check password length
 
       $this->error_ar[] = 'Password is too short. It must be at least '.$this->config['password_min_length'].' characters long.';
       return $this->return_values(false);
       
     }
 
-    // check password strength
-    if ($this->config['password_strength_test']) {
+    if ($this->config['password_strength_test']) {                              // check password strength
 
       if (!$this->check_password_strength($pw))
         return $this->return_values(false);
       
     }
 
-    // generate unique password hash
-    $pwhash = $this->generate_hash($pw, self::COST_FOR_PW_HASH);
+    $pwhash = $this->generate_hash($pw, $this->config['cost_for_pw_hash']);     // generate unique password hash
 
-    if (is_array($additional_fields) && count($additional_fields) > 0 && $this->is_assoc($additional_fields)) {
+    if (count($additional_fields) > 0 && $this->is_assoc($additional_fields)) { // fields to be inserted along with new user
 
-      $field_str = ', `'.implode('`,`', array_keys($additional_fields)).'`';
-      $param_str = ', :addfield'.implode(',:addfield', range(1, count($additional_fields)));
+      $field_str = ', `'.implode('`,`', array_keys($additional_fields)).'`';    // create comma delimited string of additional fields
+      $param_str = ', :addfield'.implode(',:addfield', range(1, count($additional_fields))); // create string that looks like ", :addfield1, :addfield2, :addfield3..."
 
     } else
       $field_str = $param_str = false;
@@ -545,21 +546,14 @@ class loginv2 {
 
       $i = 1;
 
-      foreach ($additional_fields as $insert_field => $insert_info) {
-
-        if ($insert_info['PDOtype'] === PDO::PARAM_STR)
-          $stmt->bindValue(':addfield'.$i++, $insert_info['value'], $insert_info['PDOtype']);
-
-        else
-          $stmt->bindValue(':addfield'.$i++, $insert_info['value'], $insert_info['PDOtype']);
-
-      }
+      foreach ($additional_fields as $insert_info)
+        $stmt->bindValue(':addfield'.$i++, $insert_info['value'], $insert_info['PDOtype']);
 
     }
 
     $stmt->execute();
 
-    return $this->return_values(true, array('newuserid' => $this->db->lastInsertId()));
+    return $this->return_values(true, ['newuserid' => $this->db->lastInsertId()]);
 
   }
 
@@ -577,7 +571,7 @@ class loginv2 {
   // use: $loginv2->get_clean_username('A user_name w/Stuff #01')['cleaned_username']; // will return 'Auser_namewStuff01'
   public function get_clean_username (string $user): array {
 
-    return $this->return_values(true, array('cleaned_username' => $this->clean_username($user)));
+    return $this->return_values(true, ['cleaned_username' => $this->clean_username($user)]);
 
   }
 
@@ -590,7 +584,7 @@ class loginv2 {
 
     $strength = $this->test_password_strength($pw);
 
-    return $this->return_values($strength >= $this->config['password_min_strength'], array('password_strength' => $strength));
+    return $this->return_values($strength >= $this->config['password_min_strength'], ['password_strength' => $strength]);
 
   }
 
@@ -603,9 +597,9 @@ class loginv2 {
 
     $stmt->execute();
 
-    if (list($dbhash) = $stmt->fetch(PDO::FETCH_NUM)) { // user found
+    if (list($dbhash) = $stmt->fetch(PDO::FETCH_NUM)) {                         // user found
 
-      if (!$this->check_password($pw, $dbhash)) { // password does not matched
+      if (!$this->check_password($pw, $dbhash)) {                               // password does not matched
 
         $this->error_ar[] = 'Value does not match current password.';
         return $this->return_values(false);
@@ -626,24 +620,21 @@ class loginv2 {
   // the parent program is the one responsible for making sure the password is strong enough and user and password is properly verified
   public function change_password (string $userid, string $newpw): array {
 
-    // check password length
-    if (strlen($newpw) < $this->config['password_min_length']) {
+    if (strlen($newpw) < $this->config['password_min_length']) {                // check password length
 
       $this->error_ar[] = 'Password is too short. It must be at least '.$this->config['password_min_length'].' characters long.';
       return $this->return_values(false);
       
     }
 
-    // check password strength
-    if ($this->config['password_strength_test']) {
+    if ($this->config['password_strength_test']) {                              // check password strength
 
       if (!$this->check_password_strength($newpw))
         return $this->return_values(false);
       
     }
 
-    // generate unique password hash
-    $pwhash = $this->generate_hash($newpw, self::COST_FOR_PW_HASH);
+    $pwhash = $this->generate_hash($newpw, $this->config['cost_for_pw_hash']);             // generate unique password hash
 
     // change password hash
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET `pwhash` = :pwhash, `pwchangedate` = :time WHERE `id` = :userid LIMIT 1');
@@ -661,10 +652,10 @@ class loginv2 {
   // approve a user if $wait_for_approval was set as true in the create_user() method
   // the parent program is the one responsible for making sure this method is properly secured
   // $time can set in the future, and the user won't be able to log in until that time has passed, or can be set as 0 to "unapprove" a user
-  public function approve_user (int $userid, $time = false): array {
+  public function approve_user (int $userid, int $time = -1): array {
 
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET `approved` = :time WHERE `id` = :userid LIMIT 1');
-    $stmt->bindValue(':time', ($time === false ? time() : $time), PDO::PARAM_INT);
+    $stmt->bindValue(':time', ($time < 0 ? time() : $time), PDO::PARAM_INT);
     $stmt->bindParam(':userid', $userid, PDO::PARAM_INT);
 
     $stmt->execute();
@@ -675,10 +666,14 @@ class loginv2 {
 
 
   // the parent program is the one responsible for making sure this method is properly secured
-  public function delete_user (int $userid): array {
+  // $time is the time to delete the user, if left off, or set before time(), the user will be prevented from logging in imediately, but if $time is in the future, the user can stay logged in until $time has passed
+  public function delete_user (int $userid, int $time = -1): array {
+
+    if ($time < time())                                                         // if the time suplied has already past, then set the deletion time to now
+      $time = time();
 
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET `deleted` = :time WHERE `id` = :userid LIMIT 1');
-    $stmt->bindValue(':time', time(), PDO::PARAM_INT);
+    $stmt->bindParam(':time', $time, PDO::PARAM_INT);
     $stmt->bindParam(':userid', $userid, PDO::PARAM_INT);
 
     $stmt->execute();
@@ -781,7 +776,7 @@ class loginv2 {
   // send to parent program the current blacklist and whitelist values
   public function get_managed_ips (): array {
 
-    $whiteblacklist_ips = array('whitelist' => array(), 'blacklist' => array());
+    $whiteblacklist_ips = ['whitelist' => [], 'blacklist' => []];
 
     $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::WHITELISTED_IP);
     while (list($ip) = $stmt->fetch(PDO::FETCH_NUM))
@@ -809,43 +804,43 @@ class loginv2 {
   // You can ignore $clear_errors, it is used for recursion
   public function session_keys ($key = false, $value = NULL, bool $unset = false, bool $clear_errors = true): array {
 
-    if (session_id() === '') {                        // if a session is not started, don't do anything (test it this way incase use_session is disabled, but sessions are still started)
+    if (session_id() === '') {                                                  // if a session is not started, don't do anything (test it this way incase use_session is disabled, but sessions are still started)
 
       $this->error_ar[] = 'Session has not been started.';
       return $this->return_values(false);
 
     }
 
-    if (!isset($_SESSION[$this->config['session_key']])) { // if a session is not started, don't do anything (test it this way incase use_session is disabled, but sessions are still started)
+    if (!isset($_SESSION[$this->config['session_key']])) {                      // if a session is not started, don't do anything (test it this way incase use_session is disabled, but sessions are still started)
 
       $this->error_ar[] = 'No session data has been stored.';
       return $this->return_values(false);
 
     }
 
-    $protected_keys = array('userid', 'username', 'seclevel', 'token', 'tokenexpires'); // values that are read-only -- I know this adds very little security/protection, but it at least makes it harder for developers to accidentally change them
+    $protected_keys = ['userid', 'username', 'seclevel', 'token', 'tokenexpires']; // values that are read-only -- I know this adds very little security/protection, but it at least makes it harder for developers to accidentally change them
 
-    if ($key === false)                               // get all values of loginv2's session key
+    if ($key === false)                                                         // get all values of loginv2's session key
       return $this->return_values(true, $_SESSION[$this->config['session_key']]);
 
     else {
 
-      if (is_array($key)) {                           // set/get multiple values in session
+      if (is_array($key)) {                                                     // set/get multiple values in session
 
         if (count($key) > 0) {
 
-          if ($this->is_assoc($key)) {                // set multiple values in session
+          if ($this->is_assoc($key)) {                                          // set multiple values in session
 
-            $ret_ar = array();
+            $ret_ar = [];
 
             foreach ($key as $sess_key => $keyvalue)
               $ret_ar[$sess_key] = $this->session_keys($sess_key, $keyvalue, $unset, false)[$sess_key];
 
             return $this->return_values(true, $ret_ar);
 
-          } else {                                    // get multiple values in session
+          } else {                                                              // get multiple values in session
 
-            $ret_ar = array();
+            $ret_ar = [];
 
             for ($i = 0; $i < count($key); $i++) {
 
@@ -863,26 +858,26 @@ class loginv2 {
         } else
           return $this->return_values(false);
 
-      } elseif ($value === NULL) {                        // get single session value
+      } elseif ($value === NULL) {                                              // get single session value
 
         $key = strtolower($key);
 
         if (isset($_SESSION[$this->config['session_key']][$key])) {
 
           if ($unset === false)
-            return $this->return_values(true, array($key => $_SESSION[$this->config['session_key']][$key]), $clear_errors);
+            return $this->return_values(true, [$key => $_SESSION[$this->config['session_key']][$key]], $clear_errors);
 
-          else {                                          // delete/unset session value
+          else {                                                                // delete/unset session value
 
             if (!in_array($key, $protected_keys)) { 
 
               unset($_SESSION[$this->config['session_key']][$key]);
-              return $this->return_values(true, array(), $clear_errors);
+              return $this->return_values(true, [], $clear_errors);
 
             } else {
 
               $this->error_ar[] = 'Session key "'.$key.'" is protected/read-only.';
-              return $this->return_values(false, array(), $clear_errors);
+              return $this->return_values(false, [], $clear_errors);
 
             }
 
@@ -891,21 +886,21 @@ class loginv2 {
         } else {
 
           $this->error_ar[] = 'Session key "'.$key.'" does not exist.';
-          return $this->return_values(false, array(), $clear_errors);
+          return $this->return_values(false, [], $clear_errors);
 
         }
 
-      } else {                                            // set single session value
+      } else {                                                                  // set single session value
 
         if (!in_array($key, $protected_keys)) {
 
           $_SESSION[$this->config['session_key']][$key] = $value;
-          return $this->return_values(true, array($key => $_SESSION[$this->config['session_key']][$key]), $clear_errors);
+          return $this->return_values(true, [$key => $_SESSION[$this->config['session_key']][$key]], $clear_errors);
 
         } else {
 
           $this->error_ar[] = 'Session key "'.$key.'" is protected/read-only.';
-          return $this->return_values(false, array(), $clear_errors);
+          return $this->return_values(false, [], $clear_errors);
 
         }
 
@@ -921,7 +916,7 @@ class loginv2 {
   // if either global is set to SESSION and a session has not been started, it will set the scope to $_REQUEST
   public function update_input_globals ($userpw_global = false, $token_global = false): array {
 
-    $return_type = true;  // return true on most cases -- false if 'SESSION' is selected for either global, but a session hasn't been started yet
+    $return_type = true;                                                        // return true on most cases -- false if 'SESSION' is selected for either global, but a session hasn't been started yet
 
     // set username and password scope
     switch ($this->config['userpw_global']) {
@@ -931,7 +926,7 @@ class loginv2 {
       case 'COOKIE':  $this->userpw_global = &$_COOKIE;  break;
       case 'SESSION':
 
-        if (session_id() !== '') {  // if a session has been started, use the $_SESSION variable
+        if (session_id() !== '') {                                              // if a session has been started, use the $_SESSION variable
 
           $this->userpw_global = &$_SESSION;
           break;
@@ -953,7 +948,7 @@ class loginv2 {
       case 'COOKIE':  $this->token_global = &$_COOKIE;  break;
       case 'SESSION':
 
-        if (session_id() !== '') {  // if a session has been started, use the $_SESSION variable
+        if (session_id() !== '') {                                              // if a session has been started, use the $_SESSION variable
 
           $this->token_global = &$_SESSION;
           break;
@@ -997,10 +992,14 @@ class loginv2 {
       WHERE `token` = :token AND
             `tokendate` > :tokenexpire AND
             `approved` < :time AND
-            `deleted` = 0');
+            (
+              `deleted` = 0 OR
+              `deleted` > :deltime
+            )');
     $stmt->bindParam(':token', $this->token_global[$this->config['token_key']], PDO::PARAM_STR, self::HASH_LENGTH);
     $stmt->bindValue(':tokenexpire', time() - $this->config['login_expires'], PDO::PARAM_INT);
     $stmt->bindValue(':time', time(), PDO::PARAM_INT);
+    $stmt->bindValue(':deltime', time(), PDO::PARAM_INT);
 
     $stmt->execute();
 
@@ -1029,7 +1028,11 @@ class loginv2 {
             `tokendate` > :tokenexpire AND
             `lastip` = :ip AND
             `approved` < :time AND
-            `deleted` = 0)');
+            (
+              `deleted` = 0 OR
+              `deleted` > :deltime
+            )
+            )');
     $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
     $stmt->bindParam(':user', $_SESSION[$this->config['session_key']]['username'], PDO::PARAM_STR, $this->config['username_max_length']);
     $stmt->bindParam(':seclevel', $_SESSION[$this->config['session_key']]['seclevel'], PDO::PARAM_INT);
@@ -1037,6 +1040,7 @@ class loginv2 {
     $stmt->bindValue(':tokenexpire', time() - $this->config['login_expires'], PDO::PARAM_INT);
     $stmt->bindParam(':ip', $_SERVER['REMOTE_ADDR'], PDO::PARAM_STR, self::IP_LENGTH);
     $stmt->bindValue(':time', time(), PDO::PARAM_INT);
+    $stmt->bindValue(':deltime', time(), PDO::PARAM_INT);
 
     $stmt->execute();
 
@@ -1057,13 +1061,13 @@ class loginv2 {
   private function register_new_login (int $id) {
 
     if (function_exists('random_bytes'))
-      $rand_bytes = random_bytes(17);                                         // PHP 7+
+      $rand_bytes = random_bytes(17);                                           // PHP 7+
     else
-      $rand_bytes = openssl_random_pseudo_bytes(17);                          // PHP 5.3+ -- and openSSL extension
+      $rand_bytes = openssl_random_pseudo_bytes(17);                            // PHP 5.3+ -- and openSSL extension
 
     $randomstr = substr(base64_encode($rand_bytes), 0, 22);
     $randomstr = str_replace('+', '.', $randomstr);
-    $token = $this->generate_hash($randomstr, self::COST_FOR_SES_HASH);
+    $token = $this->generate_hash($randomstr, $this->config['cost_for_ses_hash']);
 
 
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'`
@@ -1135,7 +1139,7 @@ class loginv2 {
   // could also be used to prevent certain usernames being added
   private function clean_username (string $user): string {
 
-    return preg_replace('/[^A-Za-z0-9_]/', '', $user); // allow alpha-numerics and underscore ("_")
+    return preg_replace('/[^A-Za-z0-9_]/', '', $user);                          // allow alpha-numerics and underscore ("_")
 
   }
 
@@ -1185,27 +1189,30 @@ class loginv2 {
 
     $score = 0;
 
-    if (preg_match("#[0-9]+#", $pw)) // numbers
+    if (preg_match("#[0-9]+#", $pw))                                            // numbers
       $score += 10;
-    if (preg_match("#[A-Z]+#", $pw)) // uppercase
+    if (preg_match("#[A-Z]+#", $pw))                                            // uppercase
       $score += 26;
-    if (preg_match("#[a-z]+#", $pw)) // lowercase
+    if (preg_match("#[a-z]+#", $pw))                                            // lowercase
       $score += 26;
-    if (preg_match("#[\!\@\#\$\%\^\&\*\(\)\_\+\-\=]+#", $pw)) // common characters
+    if (preg_match("#[\!\@\#\$\%\^\&\*\(\)\_\+\-\=]+#", $pw))                   // common characters
       $score += 14;
-    if (preg_match("#[\`\~\[\{\]\}\\\|\;\:\'\"\,\<\.\>\/\?\s]+#", $pw)) // less common characters
+    if (preg_match("#[\`\~\[\{\]\}\\\|\;\:\'\"\,\<\.\>\/\?\s]+#", $pw))         // less common characters
       $score += 19;
     if (preg_match("#[^a-zA-Z0-9\!\@\#\$\%\^\&\*\(\)\_\+\-\=\`\~\[\{\]\}\\\|\;\:\'\"\,\<\.\>\/\?\s]+#", $pw)) // any other character -- if I could find a good "non-UTF-8" regex, then I would probably replace this with that
-      $score += 94; // it's actually double this, but strlen counts non-UTF-8 characters as twice their actual length, and that's mostly what will be caught by the above regex, so the math works out in the end
+      $score += 94;                                                             // it's actually double this, but strlen counts non-UTF-8 characters as twice their actual length, and that's mostly what will be caught by the above regex, so the math works out in the end
 
-    return pow($score, strlen($pw)) / 10000000000; // result is seconds to crack at 20 Billion tries per second (divide by half of 20B because on average, it will be found somewhere in the middle of the search)
+    return pow($score, strlen($pw)) / 10000000000;                              // result is seconds to crack at 20 Billion tries per second (divide by half of 20B because on average, it will be found somewhere in the middle of the search)
 
   }
 
 
   // generate a new random hash based on a given string
   // if $str is a known value (such as a password), the resulting hash can be verified against the same $str in the future using $this->check_password()
-  private function generate_hash (string $str, int $cost = self::COST_FOR_PW_HASH): string {
+  private function generate_hash (string $str, int $cost = -1): string {
+
+    if ($cost < 4)
+      $cost = $this->config['cost_for_pw_hash'];
 
     // PHP >= 5.5.0 (older versions of PHP can use the commented-out code below)
     return password_hash($str, PASSWORD_BCRYPT, ['cost' => $cost]);               // forcing BCRYPT/Blowfish because the cost is manually set
@@ -1264,7 +1271,7 @@ class loginv2 {
 
       if ($this->config['session_destroy']) {
 
-        $_SESSION = array();
+        $_SESSION = [];
 
         if (isset($_COOKIE[session_name()]))
           setcookie(session_name(), '', time() - 86400, '/');
@@ -1309,7 +1316,7 @@ class loginv2 {
 
     if (list($id, $dbhash, $approved, $deleted) = $stmt->fetch(PDO::FETCH_NUM)) { // username found
 
-      if (!$this->check_password($pw, $dbhash)) { // password does not matched
+      if (!$this->check_password($pw, $dbhash)) {                               // password does not matched
 
         $this->log_bad_login_attempt(self::BAD_PW, $user);
         $this->error_ar[] = 'Wrong username or password.';
@@ -1317,7 +1324,7 @@ class loginv2 {
 
       }
 
-      if ($deleted != 0) { // user is deleted
+      if ($deleted !== 0 && $deleted <= time()) {                               // user is deleted
 
         $this->log_bad_login_attempt(self::BAD_USER, $user);
         $this->error_ar[] = 'User has been deleted, contact administator if you think this is in error.';
@@ -1325,23 +1332,23 @@ class loginv2 {
 
       }
 
-      if ($approved == 0) { // user is not approved
+      if ($approved == 0) {                                                     // user is not approved
 
         $this->error_ar[] = 'User has not yet been approved, contact administator if you think this is in error.';
         return false;
 
       }
 
-      if ($approved > time()) { // user is not approved
+      if ($approved > time()) {                                                 // user is not approved
 
         $this->error_ar[] = 'User has been approved to log in after ' . date($this->config['datetimeformat'], $approved) . '.';
         return false;
 
       }
 
-      return $id; // everything checks out, return the user's ID
+      return $id;                                                               // everything checks out, return the user's ID
 
-    } else { // no user with this nanme
+    } else {                                                                    // no user with this nanme
 
       $this->log_bad_login_attempt(self::BAD_USER, $user);
       $this->error_ar[] = 'Wrong username or password.';
@@ -1357,7 +1364,7 @@ class loginv2 {
   // type = 2 when the session values are wrong (also occurs if the session has expired -- should probably fix this)
   private function log_bad_login_attempt (int $type, $user = false) {
 
-    if ($this->config['add_bad_login_if_failed']) {
+    if ($this->config['add_bad_login_if_failed']) {                             // developer option
 
       $stmt = $this->db->prepare('INSERT INTO `'.$this->config['badlogin_table'].'`
         (`type`, `ip`, `user`, `date`)
@@ -1514,13 +1521,13 @@ class loginv2 {
     $stmt = $this->db->query('SELECT EXISTS(SELECT * FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::WHITELISTED_IP.')');
     list($whitelist_exists) = $stmt->fetch(PDO::FETCH_NUM);
 
-    if ($whitelist_exists == 1) { // if there are whitelisted IPs, then the given IP must be in that list
+    if ($whitelist_exists == 1) {                                               // if there are whitelisted IPs, then the given IP must be in that list
       $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::WHITELISTED_IP);
 
-      $block = true; // if there are whitelisted IPs, then the given IP must be in that list
+      $block = true;                                                            // if there are whitelisted IPs, then the given IP must be in that list
       while ((list($check_ip) = $stmt->fetch(PDO::FETCH_NUM)) && $block) {
 
-        if (fnmatch($check_ip, $ip)) // found in list
+        if (fnmatch($check_ip, $ip))                                            // found in list
           $block = false;
 
       }
@@ -1534,7 +1541,7 @@ class loginv2 {
     $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::BLACKLISTED_IP);
     while (list($check_ip) = $stmt->fetch(PDO::FETCH_NUM)) {
 
-      if (fnmatch($check_ip, $ip)) // found in list
+      if (fnmatch($check_ip, $ip))                                              // found in list
         return false;
 
     }
@@ -1545,15 +1552,15 @@ class loginv2 {
 
 
   // used to return all necessary information to main program
-  private function return_values ($status = false, array $add_params = array(), bool $clear_errors = true): array {
+  private function return_values ($status = false, array $add_params = [], bool $clear_errors = true): array {
 
-    $ret_ar = $this->userinfovals + array(
+    $ret_ar = $this->userinfovals + [
         'status' => $status,
         'errors' => $this->error_ar
-      ) + $add_params;
+      ] + $add_params;
 
     if ($clear_errors)
-      $this->error_ar = array();
+      $this->error_ar = [];
 
     return $ret_ar;
 
