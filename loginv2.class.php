@@ -1,18 +1,19 @@
 <?PHP
 /***** LOGIN V2 *****************************************************************
  *                                                                              *
- * Version: 2.0.3                                                               *
- * Date: September 30, 2016                                                     *
+ * Version: 2.1.0                                                               *
+ * Date: October 4, 2016                                                        *
  *                                                                              *
- * Requires PHP 5.5 or higher with OpenSSL extenion, or PHP 7.0 or higher.      *
+ * Requires PHP version >= 5.4 with either OpenSSL extenion or Mcrypt extenion, *
+ * or PHP >= 7.0.                                                               *
  *                                                                              *
  * Written by: Brandon Nimon                                                    *
  * Copyright: Brandon Nimon                                                     *
  * Email: brandon@nimonpro.com                                                  *
  *                                                                              *
- * To the best of my knowledge, as of April 2016, this is a very secure method  *
- * for storing and verifying users in a database along with cryptographically   *
- * secure hashes for password verification (using blowfish).                    *
+ * To the best of my knowledge, as of October 2016, this is a very secure       *
+ * method for storing and verifying users in a database along with              *
+ * cryptographically secure hashes for password verification (using blowfish).  *
  *                                                                              *
  * All public methods in this class return an array of values instead of just   *
  * true or false. The array is as follows:                                      *
@@ -30,10 +31,15 @@
  * an invalid token (wrong or expired) is supplied, then their username is      *
  * checked for login, and a new token is generated.                             *
  *                                                                              *
+ * PHP 5.3.7+ could probably also run this script if the array shorthand ("[]") *
+ * were to be replaced with "array()". This is untested though.                 *
+ *                                                                              *
  *                                                                              *
  * Public methods:                                                              *
  *  settings - get and set framework settings                                   *
  *  test_login - test user's credentials                                        *
+ *  get_token - check login, get token if logged in or create one               *
+ *  get_session_user_status - get errors for unexpected logout of session user  *
  *  client_allowed_to_login - check if user is allowed to log in                *
  *  userinfo - get current user's info (logged in, ID, etc.)                    *
  *  logout - log current user out/destroy session (server) and token data (db)  *
@@ -58,12 +64,13 @@
 
 /***** FEATURES TO ADD / BUGS TO FIX ********************************************
  *                                                                              *
- * Maximum inactive time (if user hasn't done anything in XX minutes, log out)  *
+ * Feature: Allow non-strict login verification (ignore changing IPs and don't  *
+ * require unique tokens).                                                      *
  *                                                                              *
  ********************************************************************************/
 
 /***** EXPECTED TABLE LAYOUT **********************************************************************************
- * More columns can be added without conflict)                                                                *
+ * More columns can be added without conflict. Use the additional_fields parameter in create_user method.     *
  **************************************************************************************************************
 
   CREATE TABLE IF NOT EXISTS `sec_users` (
@@ -76,6 +83,7 @@
     `tokendate` int(10) NOT NULL,
     `lastlogin` int(10) NOT NULL DEFAULT '0',
     `lastip` varchar(15) DEFAULT NULL,
+    `lastview` int(10) NOT NULL DEFAULT '0',
     `added` int(10) NOT NULL,
     `approved` int(10) NOT NULL,
     `deleted` int(10) NOT NULL DEFAULT '0'
@@ -133,6 +141,9 @@ class loginv2 {
   protected $config = [
       'login_expires' => 36000,             // how long each login is valid for - default: 10 hours
 
+      'inactive_logout' => false,           // run inactive logout - if a user hasn't visited a page in inactive_timeout seconds, their login is no longer valid
+      'inactive_timeout' => 3600,           // how long after being inactive before the user is logged out automatically - default: 1 hour
+
       'use_session' => true,                // intialize and utilize session data -- this probably should only be disabled if this is used in an API setup
       'session_key' => 'loginv2',           // key in $_SESSION that has the session values used in the class
       'session_destroy' => false,           // during logout, should the entire session be destroyed? false will only destroy the session information set in session_key (set above), true will invoke PHP's session_destroy() actually removing all server-side session data (and cookie) for the current user
@@ -140,6 +151,7 @@ class loginv2 {
       'token_global' => 'REQUEST',          // can be set as 'REQUEST', 'GET', 'POST', 'SESSION', or 'COOKIE' -- limits the scope of valid input, to increase security a bit, or allow the use of externally controlled sessions or cookies (using cookies for this is probably a bad idea) -- if set to SESSION, a session is started even if use_session is disabled, but none of the other session features will work if use_session is disabled
       'token_only_allowed' => false,        // allow users to login with their token only (useful for APIs) - slightly less secure if enabled, but for most purposes, acceptibly so
       'token_key' => 'loginv2token',        // this key is searched for in the $config['token_global'] defined scope, it holds the user's token -- basically, it's the variable's name that will be submitted containing the verification token
+      'token_cleanup_keep' => 600,          // keep tokens around for a little while after they expire, this is purely for displaying errors if a user get logged out unexpectedly - default: 10 minutes
 
       'username_max_length' => 20,          // maximum length a username can be (after invalid characters have been removed -- valid: A-Z, a-z, 0-9, _ ) -- length limit should be included in input form
       'username_min_length' => 3,           // minimum length a username can be (after invalid characters have been removed -- valid: A-Z, a-z, 0-9, _ )
@@ -147,7 +159,7 @@ class loginv2 {
       'password_max_length' => 72,          // maximum length an inputted password can be, any longer than this, and the input is truncated, shortening this only reduces your overall security -- this limit is determined by BCRYPT / Blowfish, the function truncates passwords to 72 characters
       'password_min_length' => 8,           // minimum length an inputted password can be -- length is only a part of password securtiy and a short length can be used if password_strength_test is enabled and password_min_strength is a sufficiently high value (will force a minimum length to an extent anyway)
       'password_strength_test' => true,     // do a basic check on password for strength
-      'password_min_strength' => 18000,     // minimum allowable strength for a password to be valid -- this value is the approximate number of seconds to brute force match the password - 18000 = 300 minutes - 5 hours -- higher is better in a logarithmic way 20000 is only slightly better than 2000 and so on
+      'password_min_strength' => 18000,     // minimum allowable strength for a password to be valid -- this value is the approximate number of seconds to brute force match the password - 18000 = 300 minutes - 5 hours -- higher is better in a logarithmic way 20000 is only slightly better than 2000 and so on -- real life hacking time should be *much* longer due to Blowfish's high cost of hashing
 
       'userpw_global' => 'REQUEST',         // can be set as 'REQUEST', 'GET', 'POST', 'SESSION', or 'COOKIE' -- limits the scope of valid input, to increase security a bit, or allow the use of externally controlled sessions or cookies (using cookies for this is a bad idea) -- if set to SESSION, a session is started even if use_session is disabled, but none of the other session features will work if use_session is disabled
       'username_key' => 'user',             // key in $userpw_global that has the username
@@ -191,7 +203,7 @@ class loginv2 {
   const HASH_LENGTH = 60;                   // the length of the hash generated (used for password length and token length) - 60 characters is the output length of BCRYPT / Blowfish hashing
   const IP_LENGTH = 15;                     // the length limit of IPs in the database (will need to be 45 for IPv6)
 
-  // Values used for when an unsuccessful login is logged. !! DO NOT CHANGE !!
+  // Values stored to database for when an unsuccessful login is logged. !! DO NOT CHANGE !!
   const BAD_USER = 1;
   const BAD_PW = 2;
   const BAD_SESSION = 3;
@@ -206,6 +218,9 @@ class loginv2 {
   // initialize class, $db is PDO databse connection, $config is settings to change (if you need)
   // configurations should be setup during initialization for best results, changing some settings after initialization are undocumented (but sometimes useful)
   public function __construct (pdo &$db, array $config = []) {
+
+    if (!function_exists('random_bytes') && !function_exists('password_hash') && !function_exists('openssl_random_pseudo_bytes') && !function_exists('mcrypt_create_iv'))
+      throw new Exception('Login V2 Requires one of the following: PHP version >= 7.0.0 / OpenSSL extension / Mcrypt extension'); // there isn't enough here to generate a cryptographically secure hash or random bytes
 
     $this->db = &$db;                                                           // assign active database
 
@@ -437,6 +452,83 @@ class loginv2 {
   }
 
 
+  // if a user was logged out (usually unexpectedly), this method can tell the user why
+  // only works if sessions are being used
+  // token expiring is only displayed if caught before it is cleaned up, the timing of which is controlled by the token_cleanup_keep variable
+  public function get_session_user_status () {
+
+    if (session_id() !== '' &&                                                  // if session is enabled
+        (
+          isset($_SESSION[$this->config['session_key']]['userid']) ||           // if a userid is available or...
+          isset($_SESSION[$this->config['token_key']])                          // if a token is available
+        )
+      ) {
+
+      if (isset($_SESSION[$this->config['session_key']]['userid'])) {           // if a userid is available
+
+        $stmt = $this->db->prepare('SELECT `token`, `tokendate`, `lastview`, `approved` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
+        $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
+
+      } elseif (isset($_SESSION[$this->config['token_key']])) {                 // if a token is available
+
+        $stmt = $this->db->prepare('SELECT `token`, `tokendate`, `lastview`, `approved` FROM `'.$this->config['user_table'].'` WHERE `token` = :token');
+        $stmt->bindParam(':token', $_SESSION[$this->config['token_key']], PDO::PARAM_STR);
+
+      }
+
+      $stmt->execute();
+
+      if (list($token, $tokendate, $lastview, $approved) = $stmt->fetch(PDO::FETCH_NUM)) { // if user information is found
+          
+        $ret = true;                                                            // return true if the user seems to be logged in (other errors could still keep the user logged out)
+
+        if (isset($_SESSION[$this->config['token_key']]) && $token !== $_SESSION[$this->config['token_key']]) {
+
+          $this->error_ar[] = 'Invalid token. Log in again to acquire new token.';
+          $ret = false;
+
+        }
+
+        if (isset($_SESSION[$this->config['session_key']]['token']) && $token !== $_SESSION[$this->config['session_key']]['token']) {
+
+          $this->error_ar[] = 'Invalid token. Log in again to acquire new token.';
+          $ret = false;
+
+        }
+
+        if ($tokendate <= time() - $this->config['login_expires']) {
+
+          $this->error_ar[] = 'Token expired. Log in again to acquire new token.';
+          $ret = false;
+
+        }
+
+        if ($this->config['inactive_logout'] && $lastview <= time() - $this->config['inactive_timeout']) {
+
+          $this->error_ar[] = 'Inactive for more than '.$this->relative_time($this->config['inactive_timeout']).'. Log in again.';
+          $ret = false;
+
+        }
+
+        if ($approved >= time()) {
+
+          $this->error_ar[] = 'User has not been approved, contact administator if you think this is in error.';
+          $ret = false;
+
+        }
+
+        return $this->return_values($ret);
+
+      } else
+        $this->error_ar[] = 'User or token information not found.';
+
+    }
+
+    return $this->return_values(false);
+
+  }
+
+
   // provide read-only public access to user's info
   // can be used like this: if ($loginv2->userinfo()['loggedin']) { ... }
   // or like this: if ($loginv2->userinfo('loggedin')) { ... }
@@ -535,12 +627,13 @@ class loginv2 {
       VALUES
       (:user, :pwhash, :seclevel, :time1, 0, 0, :time2, :approved'.$param_str.')');
 
+    $time = time();
     $stmt->bindParam(':user', $user, PDO::PARAM_STR, $this->config['username_max_length']);
     $stmt->bindParam(':pwhash', $pwhash, PDO::PARAM_STR, self::HASH_LENGTH);
     $stmt->bindParam(':seclevel', $seclevel, PDO::PARAM_INT);
-    $stmt->bindValue(':time1', $now = time(), PDO::PARAM_INT);
-    $stmt->bindValue(':time2', $now, PDO::PARAM_INT);
-    $stmt->bindValue(':approved', ($wait_for_approval ? 0 : $now), PDO::PARAM_INT);
+    $stmt->bindParam(':time1', $time, PDO::PARAM_INT);
+    $stmt->bindParam(':time2', $time, PDO::PARAM_INT);
+    $stmt->bindValue(':approved', ($wait_for_approval ? 0 : $time), PDO::PARAM_INT);
 
     if ($field_str) {
 
@@ -634,7 +727,7 @@ class loginv2 {
       
     }
 
-    $pwhash = $this->generate_hash($newpw, $this->config['cost_for_pw_hash']);             // generate unique password hash
+    $pwhash = $this->generate_hash($newpw, $this->config['cost_for_pw_hash']);  // generate unique password hash
 
     // change password hash
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET `pwhash` = :pwhash, `pwchangedate` = :time WHERE `id` = :userid LIMIT 1');
@@ -978,41 +1071,57 @@ class loginv2 {
   private function cleanup_login_table () {
 
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET token = "", `tokendate` = 0 WHERE `tokendate` != 0 AND `tokendate` < :date');
-    $stmt->bindValue(':date', time() - $this->config['login_expires'], PDO::PARAM_INT);
+    $stmt->bindValue(':date', time() - $this->config['login_expires'] - $this->config['token_cleanup_keep'], PDO::PARAM_INT); // save tokens for a little while after they expire to allow error to be displayed
 
     $stmt->execute();
 
   }
 
 
-  // find a user that matches all the givenn token, if it exists, return their id, if not, return false
+  // find a user that matches all the given token, if it exists, return their id, if not, return false
   private function check_token_login () {
 
-    $stmt = $this->db->prepare('SELECT `id` FROM `'.$this->config['user_table'].'`
+    $stmt = $this->db->prepare('SELECT `id`, `tokendate`, `lastview`, `approved` FROM `'.$this->config['user_table'].'`
       WHERE `token` = :token AND
-            `tokendate` > :tokenexpire AND
-            `approved` < :time AND
             (
               `deleted` = 0 OR
               `deleted` > :deltime
             )');
     $stmt->bindParam(':token', $this->token_global[$this->config['token_key']], PDO::PARAM_STR, self::HASH_LENGTH);
-    $stmt->bindValue(':tokenexpire', time() - $this->config['login_expires'], PDO::PARAM_INT);
-    $stmt->bindValue(':time', time(), PDO::PARAM_INT);
     $stmt->bindValue(':deltime', time(), PDO::PARAM_INT);
 
     $stmt->execute();
 
-    if (list($id) = $stmt->fetch(PDO::FETCH_NUM))
+    if (list($id, $tokendate, $lastview, $approved) = $stmt->fetch(PDO::FETCH_NUM)) {
+
+      if ($tokendate <= time() - $this->config['login_expires']) {
+
+        $this->error_ar[] = 'Token expired. Log in again to acquire new token.';
+        return false;
+
+      }
+
+      if ($this->config['inactive_logout'] && $lastview <= time() - $this->config['inactive_timeout']) {
+
+        $this->error_ar[] = 'Inactive for more than '.$this->config['inactive_timeout'].' seconds. Log in again.';
+        return false;
+
+      }
+
+      if ($approved >= time()) {
+
+        $this->error_ar[] = 'User has not been approved, contact administator if you think this is in error.';
+        return false;
+
+      }
+
       return $id;
 
-    else {
-
-      $this->log_bad_login_attempt(self::BAD_TOKEN);
-      $this->error_ar[] = 'Token expired or invalid. Log in again to acquire new token.';
-      return false;
-
     }
+
+    $this->log_bad_login_attempt(self::BAD_TOKEN);
+    $this->error_ar[] = 'Invalid token. Log in again to acquire new token.';
+    return false;
 
   }
 
@@ -1020,25 +1129,30 @@ class loginv2 {
   // find a user that matches all the information stored in the $_SESSION variable, if it exists, return user's id
   private function check_session_login () {
 
-    $stmt = $this->db->prepare('SELECT EXISTS(SELECT * FROM `'.$this->config['user_table'].'`
-      WHERE `id` = :userid AND
-            `user` = :user AND
-            `seclevel` = :seclevel AND
-            `token` = :token AND
-            `tokendate` > :tokenexpire AND
-            `lastip` = :ip AND
-            `approved` < :time AND
-            (
-              `deleted` = 0 OR
-              `deleted` > :deltime
-            )
-            )');
+    $stmt = $this->db->prepare('SELECT EXISTS(
+        SELECT * FROM `'.$this->config['user_table'].'`
+        WHERE `id` = :userid AND
+              `user` = :user AND
+              `seclevel` = :seclevel AND
+              `token` = :token AND
+              `tokendate` > :tokenexpire AND
+              `lastip` = :ip AND
+              '.($this->config['inactive_timeout'] ? '`lastview` > :inacttime AND' : '').'
+              `approved` < :time AND
+              (
+                `deleted` = 0 OR
+                `deleted` > :deltime
+              )
+      )');
     $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
     $stmt->bindParam(':user', $_SESSION[$this->config['session_key']]['username'], PDO::PARAM_STR, $this->config['username_max_length']);
     $stmt->bindParam(':seclevel', $_SESSION[$this->config['session_key']]['seclevel'], PDO::PARAM_INT);
     $stmt->bindParam(':token', $_SESSION[$this->config['session_key']]['token'], PDO::PARAM_STR, self::HASH_LENGTH);
     $stmt->bindValue(':tokenexpire', time() - $this->config['login_expires'], PDO::PARAM_INT);
-    $stmt->bindParam(':ip', $_SERVER['REMOTE_ADDR'], PDO::PARAM_STR, self::IP_LENGTH);
+    $ip = $_SERVER['REMOTE_ADDR'];
+    $stmt->bindParam(':ip', $ip, PDO::PARAM_STR, self::IP_LENGTH);
+    if ($this->config['inactive_timeout'])
+      $stmt->bindValue(':inacttime', time() - $this->config['inactive_timeout'], PDO::PARAM_INT);
     $stmt->bindValue(':time', time(), PDO::PARAM_INT);
     $stmt->bindValue(':deltime', time(), PDO::PARAM_INT);
 
@@ -1047,8 +1161,30 @@ class loginv2 {
     list($exists) = $stmt->fetch(PDO::FETCH_NUM);
 
     if (!$exists) {
+
+      // check inactive_timeout specificially if the session check fails (slightly faster in most cases)
+      if ($this->config['inactive_timeout']) {
+
+        $stmt = $db->prepare('SELECT `lastview` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
+        $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
+
+        $stmt->execute();
+
+        list($lastview) = $stmt->fetch(PDO::FETCH_NUM);
+
+        if ($lastview <= time() - $this->config['inactive_timeout']) {
+
+          $this->error_ar[] = 'Inactive for more than '.$this->config['inactive_timeout'].' seconds. Log in again.';
+          return false;
+
+        }
+
+      }
+
       $this->log_bad_login_attempt(self::BAD_SESSION, $_SESSION[$this->config['session_key']]['username']);
       $this->error_ar[] = 'Session expired or invalid. Log in again.';
+      return false;
+
     }
 
     return ($exists == 1 ? $_SESSION[$this->config['session_key']]['userid'] : false);
@@ -1060,28 +1196,25 @@ class loginv2 {
   // should only be called after user with this $id is properly verified
   private function register_new_login (int $id) {
 
-    if (function_exists('random_bytes'))
-      $rand_bytes = random_bytes(17);                                           // PHP 7+
-    else
-      $rand_bytes = openssl_random_pseudo_bytes(17);                            // PHP 5.3+ -- and openSSL extension
-
-    $randomstr = substr(base64_encode($rand_bytes), 0, 22);
+    $randomstr = substr(base64_encode($this->rand_bytes(17)), 0, 22);
     $randomstr = str_replace('+', '.', $randomstr);
     $token = $this->generate_hash($randomstr, $this->config['cost_for_ses_hash']);
 
-
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'`
-      SET `lastlogin` = :time,
+      SET `lastlogin` = :time1,
           `token` = :token,
           `tokendate` = :time2,
-          `lastip` = :ip
+          `lastip` = :ip,
+          `lastview` = :time3
       WHERE `id` = :userid LIMIT 1');
     $time = time();
-    $stmt->bindParam(':time', $time, PDO::PARAM_INT);
+    $stmt->bindParam(':time1', $time, PDO::PARAM_INT);
     $stmt->bindParam(':time2', $time, PDO::PARAM_INT);
+    $stmt->bindParam(':time3', $time, PDO::PARAM_INT);
     $stmt->bindParam(':userid', $id, PDO::PARAM_INT);
     $stmt->bindParam(':token', $token, PDO::PARAM_STR, self::HASH_LENGTH);
-    $stmt->bindParam(':ip', $_SERVER['REMOTE_ADDR'], PDO::PARAM_STR, self::IP_LENGTH);
+    $ip = $_SERVER['REMOTE_ADDR'];
+    $stmt->bindParam(':ip', $ip, PDO::PARAM_STR, self::IP_LENGTH);
 
     $stmt->execute();
 
@@ -1104,7 +1237,7 @@ class loginv2 {
   // should only be called after user with this $id is properly verified
   private function log_user_in_from_db (int $id) {
 
-    $stmt = $this->db->prepare('SELECT `user`,`seclevel`,`token`,`tokendate` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid LIMIT 1');
+    $stmt = $this->db->prepare('SELECT `user`, `seclevel`, `token`, `tokendate` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid LIMIT 1');
     $stmt->bindParam(':userid', $id, PDO::PARAM_INT);
 
     $stmt->execute();
@@ -1117,6 +1250,14 @@ class loginv2 {
     $this->userinfovals['seclevel'] = $seclevel;
     $this->userinfovals['token'] = $token;
     $this->userinfovals['tokenexpires'] = $tokendate + $this->config['login_expires'];
+
+    $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET `lastip` = :ip, `lastview` = :time WHERE `id` = :userid LIMIT 1');
+    $ip = $_SERVER['REMOTE_ADDR'];
+    $stmt->bindParam(':ip', $ip, PDO::PARAM_STR, self::IP_LENGTH);
+    $stmt->bindValue(':time', time(), PDO::PARAM_INT);
+    $stmt->bindParam(':userid', $id, PDO::PARAM_INT);
+
+    $stmt->execute();
 
   }
 
@@ -1131,6 +1272,14 @@ class loginv2 {
     $this->userinfovals['seclevel'] = $_SESSION[$this->config['session_key']]['seclevel'];
     $this->userinfovals['token'] = $_SESSION[$this->config['session_key']]['token'];
     $this->userinfovals['tokenexpires'] = $_SESSION[$this->config['session_key']]['tokenexpires'];
+
+    $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET `lastip` = :ip, `lastview` = :time WHERE `id` = :userid LIMIT 1');
+    $ip = $_SERVER['REMOTE_ADDR'];
+    $stmt->bindParam(':ip', $ip, PDO::PARAM_STR, self::IP_LENGTH);
+    $stmt->bindValue(':time', time(), PDO::PARAM_INT);
+    $stmt->bindParam(':userid', $this->userinfovals['userid'], PDO::PARAM_INT);
+
+    $stmt->execute();
 
   }
 
@@ -1207,28 +1356,43 @@ class loginv2 {
   }
 
 
+  // generate cryptographically secure random bytes
+  private function rand_bytes (int $size): string {
+
+    if (function_exists('random_bytes'))                                        // PHP >= 7.0.0
+      return random_bytes($size);
+
+    if (function_exists('openssl_random_pseudo_bytes'))                         // if OpenSSL extension is installed and PHP >= 5.3.0
+      return openssl_random_pseudo_bytes($size);
+
+    if (function_exists('mcrypt_create_iv'))                                    // if Mcrypt extension is installed and PHP >= 5.3.0
+      return mcrypt_create_iv($size, MCRYPT_DEV_URANDOM);
+
+    throw new Exception('Login V2 Requires one of the following: PHP version >= 7.0.0 / OpenSSL extension / Mcrypt extension'); // there isn't enough here to generate a cryptographically secure hash or random bytes
+
+  }
+
+
   // generate a new random hash based on a given string
   // if $str is a known value (such as a password), the resulting hash can be verified against the same $str in the future using $this->check_password()
-  private function generate_hash (string $str, int $cost = -1): string {
+  private function generate_hash (string $str, int $cost): string {
 
-    if ($cost < 4)
-      $cost = $this->config['cost_for_pw_hash'];
+    if ($cost < 4)                                                              // cost values less than 4 do not produce reliable results
+      $cost = 4;
 
-    // PHP >= 5.5.0 (older versions of PHP can use the commented-out code below)
-    return password_hash($str, PASSWORD_BCRYPT, ['cost' => $cost]);               // forcing BCRYPT/Blowfish because the cost is manually set
+    if (function_exists('password_hash'))                                       // PHP >= 5.5.0
+      return password_hash($str, PASSWORD_BCRYPT, ['cost' => $cost]);           // generate hash - forcing BCRYPT/Blowfish because the cost is manually set
 
-    // $str = urlencode($str);                                                     // make the password/random string crypt() compatible
+    $salt = substr(base64_encode($this->rand_bytes(17)), 0, 22);                // generate cryptographically secure random salt
+    $salt = str_replace('+', '.', $salt);
 
-    // $salt = substr(base64_encode(openssl_random_pseudo_bytes(17)), 0, 22);      // generate cryptographically secure random salt
-    // $salt = str_replace('+', '.', $salt);
+    $param = '$'.implode('$', [
+      "2y",                                                                     // select the most secure version of blowfish (>=PHP 5.3.7)
+      str_pad(substr(strval($cost), 0, 2), 2, '0', STR_PAD_LEFT),               // add the cost in two digits
+      $salt                                                                     // add the salt
+    ]);
 
-    // $param = '$'.implode('$', array(
-    //   "2y",                                                                     // select the most secure version of blowfish (>=PHP 5.3.7)
-    //   str_pad(substr($cost, 0, 2), 2, '0', STR_PAD_LEFT),                       // add the cost in two digits
-    //   $salt                                                                     // add the salt
-    // ));
-
-    // return crypt($str, $param);
+    return crypt($str, $param);                                                 // generate hash
 
   }
 
@@ -1236,12 +1400,10 @@ class loginv2 {
   // check password against correctly formatted crypt() hash
   private function check_password (string $str, string $hash): bool {
 
-    // PHP >= 5.5.0 (older versions of PHP can use the commented-out code below)
-    return password_verify($str, $hash);
+    if (function_exists('password_verify'))                                     // PHP >= 5.5.0
+      return password_verify($str, $hash);                                      // check to see if the hashes match
 
-    // $str = urlencode($str);                                                     // make the password/string crypt() compatible
-
-    // return crypt($str, $hash) == $hash;                                         // check to see if the hashes match
+    return crypt($str, $hash) == $hash;                                         // check to see if the hashes match
 
   }
 
@@ -1309,7 +1471,7 @@ class loginv2 {
     $user = $this->clean_username($user);
     $pw = substr($pw, 0, $this->config['password_max_length']);
 
-    $stmt = $this->db->prepare('SELECT `id`,`pwhash`,`approved`,`deleted` FROM `'.$this->config['user_table'].'` WHERE `user` = :user LIMIT 1');
+    $stmt = $this->db->prepare('SELECT `id`, `pwhash`, `approved`, `deleted` FROM `'.$this->config['user_table'].'` WHERE `user` = :user LIMIT 1');
     $stmt->bindParam(':user', $user, PDO::PARAM_STR);
 
     $stmt->execute();
@@ -1568,10 +1730,35 @@ class loginv2 {
 
 
   // test if a given array is associative or not
-  // note that it reutnrs true if the array is empty -- so test for that beforehand if it's important
+  // note that it returns true if the array is empty -- so test for that beforehand if it's important
   private function is_assoc (array $arr): bool {
 
     return array_keys($arr) !== range(0, count($arr) - 1);
+
+  }
+
+
+  // display time in "4 minutes 10 seconds" format, $precision_depth is precision depth
+  // leaving public incase someone wants to use it somewhere on their site...
+  public function relative_time (int $seconds, int $precision_depth = 0, array $denomname = array('second','minute','hour','day','week','month','year','decade'), array $denomval = array(1,60,3600,86400,604800,2630880,31570560,315705600)): string {
+
+    for ($v = count($denomval) - 1; ($v >= 0) && (($no = $seconds / $denomval[$v]) <= 1); $v--);
+      if ($v < 0)
+        $v = 0;
+
+    $seconds %= $denomval[$v];
+  
+    $no = ($precision_depth ? floor($no) : round($no)); // if last denomination, round
+  
+    if ($no != 1)
+      $denomname[$v] .= 's';
+
+    $x = $no . ' ' . $denomname[$v];
+  
+    if (($precision_depth > 0) && ($v >= 1))
+      $x .= ' ' . $this->relative_time($seconds, $precision_depth - 1, $denomname, $denomval);
+  
+    return $x;
 
   }
 
