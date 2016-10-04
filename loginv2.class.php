@@ -141,7 +141,7 @@ class loginv2 {
   protected $config = [
       'login_expires' => 36000,             // how long each login is valid for - default: 10 hours
 
-      'inactive_logout' => false,           // run inactive logout - if a user hasn't visited a page in inactive_timeout seconds, their login is no longer valid
+      'inactive_logout' => false,           // enable inactive logout - if a user hasn't visited a page in inactive_timeout seconds, their login is no longer valid
       'inactive_timeout' => 3600,           // how long after being inactive before the user is logged out automatically - default: 1 hour
 
       'use_session' => true,                // intialize and utilize session data -- this probably should only be disabled if this is used in an API setup
@@ -203,7 +203,7 @@ class loginv2 {
   const HASH_LENGTH = 60;                   // the length of the hash generated (used for password length and token length) - 60 characters is the output length of BCRYPT / Blowfish hashing
   const IP_LENGTH = 15;                     // the length limit of IPs in the database (will need to be 45 for IPv6)
 
-  // Values stored to database for when an unsuccessful login is logged. !! DO NOT CHANGE !!
+  // Values stored to database when an unsuccessful login is logged. !! DO NOT CHANGE !!
   const BAD_USER = 1;
   const BAD_PW = 2;
   const BAD_SESSION = 3;
@@ -219,7 +219,7 @@ class loginv2 {
   // configurations should be setup during initialization for best results, changing some settings after initialization are undocumented (but sometimes useful)
   public function __construct (pdo &$db, array $config = []) {
 
-    if (!function_exists('random_bytes') && !function_exists('password_hash') && !function_exists('openssl_random_pseudo_bytes') && !function_exists('mcrypt_create_iv'))
+    if (!function_exists('random_bytes') && !function_exists('openssl_random_pseudo_bytes') && !function_exists('mcrypt_create_iv'))
       throw new Exception('Login V2 Requires one of the following: PHP version >= 7.0.0 / OpenSSL extension / Mcrypt extension'); // there isn't enough here to generate a cryptographically secure hash or random bytes
 
     $this->db = &$db;                                                           // assign active database
@@ -1165,7 +1165,7 @@ class loginv2 {
       // check inactive_timeout specificially if the session check fails (slightly faster in most cases)
       if ($this->config['inactive_timeout']) {
 
-        $stmt = $db->prepare('SELECT `lastview` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
+        $stmt = $this->db->prepare('SELECT `lastview` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
         $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
 
         $stmt->execute();
