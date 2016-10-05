@@ -1,8 +1,8 @@
 <?PHP
 /***** LOGIN V2 *****************************************************************
  *                                                                              *
- * Version: 2.1.0                                                               *
- * Date: October 4, 2016                                                        *
+ * Version: 2.1.1                                                               *
+ * Date: October 5, 2016                                                        *
  *                                                                              *
  * Requires PHP version >= 5.4 with either OpenSSL extenion or Mcrypt extenion, *
  * or PHP >= 7.0.                                                               *
@@ -39,7 +39,6 @@
  *  settings - get and set framework settings                                   *
  *  test_login - test user's credentials                                        *
  *  get_token - check login, get token if logged in or create one               *
- *  get_session_user_status - get errors for unexpected logout of session user  *
  *  client_allowed_to_login - check if user is allowed to log in                *
  *  userinfo - get current user's info (logged in, ID, etc.)                    *
  *  logout - log current user out/destroy session (server) and token data (db)  *
@@ -151,7 +150,6 @@ class loginv2 {
       'token_global' => 'REQUEST',          // can be set as 'REQUEST', 'GET', 'POST', 'SESSION', or 'COOKIE' -- limits the scope of valid input, to increase security a bit, or allow the use of externally controlled sessions or cookies (using cookies for this is probably a bad idea) -- if set to SESSION, a session is started even if use_session is disabled, but none of the other session features will work if use_session is disabled
       'token_only_allowed' => false,        // allow users to login with their token only (useful for APIs) - slightly less secure if enabled, but for most purposes, acceptibly so
       'token_key' => 'loginv2token',        // this key is searched for in the $config['token_global'] defined scope, it holds the user's token -- basically, it's the variable's name that will be submitted containing the verification token
-      'token_cleanup_keep' => 600,          // keep tokens around for a little while after they expire, this is purely for displaying errors if a user get logged out unexpectedly - default: 10 minutes
 
       'username_max_length' => 20,          // maximum length a username can be (after invalid characters have been removed -- valid: A-Z, a-z, 0-9, _ ) -- length limit should be included in input form
       'username_min_length' => 3,           // minimum length a username can be (after invalid characters have been removed -- valid: A-Z, a-z, 0-9, _ )
@@ -391,7 +389,7 @@ class loginv2 {
         }
 
       } else
-        $this->error_ar[] = 'No valid login values.';
+        $this->error_ar[] = 'Submit login information.';
 
     }
 
@@ -444,83 +442,6 @@ class loginv2 {
 
       } else
         $this->error_ar[] = 'No valid login values.';
-
-    }
-
-    return $this->return_values(false);
-
-  }
-
-
-  // if a user was logged out (usually unexpectedly), this method can tell the user why
-  // only works if sessions are being used
-  // token expiring is only displayed if caught before it is cleaned up, the timing of which is controlled by the token_cleanup_keep variable
-  public function get_session_user_status () {
-
-    if (session_id() !== '' &&                                                  // if session is enabled
-        (
-          isset($_SESSION[$this->config['session_key']]['userid']) ||           // if a userid is available or...
-          isset($_SESSION[$this->config['token_key']])                          // if a token is available
-        )
-      ) {
-
-      if (isset($_SESSION[$this->config['session_key']]['userid'])) {           // if a userid is available
-
-        $stmt = $this->db->prepare('SELECT `token`, `tokendate`, `lastview`, `approved` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
-        $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
-
-      } elseif (isset($_SESSION[$this->config['token_key']])) {                 // if a token is available
-
-        $stmt = $this->db->prepare('SELECT `token`, `tokendate`, `lastview`, `approved` FROM `'.$this->config['user_table'].'` WHERE `token` = :token');
-        $stmt->bindParam(':token', $_SESSION[$this->config['token_key']], PDO::PARAM_STR);
-
-      }
-
-      $stmt->execute();
-
-      if (list($token, $tokendate, $lastview, $approved) = $stmt->fetch(PDO::FETCH_NUM)) { // if user information is found
-          
-        $ret = true;                                                            // return true if the user seems to be logged in (other errors could still keep the user logged out)
-
-        if (isset($_SESSION[$this->config['token_key']]) && $token !== $_SESSION[$this->config['token_key']]) {
-
-          $this->error_ar[] = 'Invalid token. Log in again to acquire new token.';
-          $ret = false;
-
-        }
-
-        if (isset($_SESSION[$this->config['session_key']]['token']) && $token !== $_SESSION[$this->config['session_key']]['token']) {
-
-          $this->error_ar[] = 'Invalid token. Log in again to acquire new token.';
-          $ret = false;
-
-        }
-
-        if ($tokendate <= time() - $this->config['login_expires']) {
-
-          $this->error_ar[] = 'Token expired. Log in again to acquire new token.';
-          $ret = false;
-
-        }
-
-        if ($this->config['inactive_logout'] && $lastview <= time() - $this->config['inactive_timeout']) {
-
-          $this->error_ar[] = 'Inactive for more than '.$this->relative_time($this->config['inactive_timeout']).'. Log in again.';
-          $ret = false;
-
-        }
-
-        if ($approved >= time()) {
-
-          $this->error_ar[] = 'User has not been approved, contact administator if you think this is in error.';
-          $ret = false;
-
-        }
-
-        return $this->return_values($ret);
-
-      } else
-        $this->error_ar[] = 'User or token information not found.';
 
     }
 
@@ -1071,7 +992,7 @@ class loginv2 {
   private function cleanup_login_table () {
 
     $stmt = $this->db->prepare('UPDATE `'.$this->config['user_table'].'` SET token = "", `tokendate` = 0 WHERE `tokendate` != 0 AND `tokendate` < :date');
-    $stmt->bindValue(':date', time() - $this->config['login_expires'] - $this->config['token_cleanup_keep'], PDO::PARAM_INT); // save tokens for a little while after they expire to allow error to be displayed
+    $stmt->bindValue(':date', time() - $this->config['login_expires'], PDO::PARAM_INT);
 
     $stmt->execute();
 
@@ -1137,7 +1058,7 @@ class loginv2 {
               `token` = :token AND
               `tokendate` > :tokenexpire AND
               `lastip` = :ip AND
-              '.($this->config['inactive_timeout'] ? '`lastview` > :inacttime AND' : '').'
+              '.($this->config['inactive_logout'] ? '`lastview` > :inacttime AND' : '').'
               `approved` < :time AND
               (
                 `deleted` = 0 OR
@@ -1151,7 +1072,7 @@ class loginv2 {
     $stmt->bindValue(':tokenexpire', time() - $this->config['login_expires'], PDO::PARAM_INT);
     $ip = $_SERVER['REMOTE_ADDR'];
     $stmt->bindParam(':ip', $ip, PDO::PARAM_STR, self::IP_LENGTH);
-    if ($this->config['inactive_timeout'])
+    if ($this->config['inactive_logout'])
       $stmt->bindValue(':inacttime', time() - $this->config['inactive_timeout'], PDO::PARAM_INT);
     $stmt->bindValue(':time', time(), PDO::PARAM_INT);
     $stmt->bindValue(':deltime', time(), PDO::PARAM_INT);
@@ -1163,7 +1084,7 @@ class loginv2 {
     if (!$exists) {
 
       // check inactive_timeout specificially if the session check fails (slightly faster in most cases)
-      if ($this->config['inactive_timeout']) {
+      if ($this->config['inactive_logout']) {
 
         $stmt = $this->db->prepare('SELECT `lastview` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
         $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
