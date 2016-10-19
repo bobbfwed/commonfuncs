@@ -1,8 +1,8 @@
 <?PHP
 /***** LOGIN V2 *****************************************************************
  *                                                                              *
- * Version: 2.1.1                                                               *
- * Date: October 5, 2016                                                        *
+ * Version: 2.1.2                                                               *
+ * Date: October 19, 2016                                                       *
  *                                                                              *
  * Requires PHP version >= 5.4 with either OpenSSL extenion or Mcrypt extenion, *
  * or PHP >= 7.0.                                                               *
@@ -611,7 +611,7 @@ class loginv2 {
 
     $stmt->execute();
 
-    if (list($dbhash) = $stmt->fetch(PDO::FETCH_NUM)) {                         // user found
+    if ($dbhash = $stmt->fetch(PDO::FETCH_COLUMN)) {                            // user found
 
       if (!$this->check_password($pw, $dbhash)) {                               // password does not matched
 
@@ -793,12 +793,10 @@ class loginv2 {
     $whiteblacklist_ips = ['whitelist' => [], 'blacklist' => []];
 
     $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::WHITELISTED_IP);
-    while (list($ip) = $stmt->fetch(PDO::FETCH_NUM))
-      $whiteblacklist_ips['whitelist'][] = $ip;
+    $whiteblacklist_ips['whitelist'] = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
     $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::BLACKLISTED_IP);
-    while (list($ip) = $stmt->fetch(PDO::FETCH_NUM))
-      $whiteblacklist_ips['blacklist'][] = $ip;
+    $whiteblacklist_ips['blacklist'] = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
 
     return $this->return_values(true, $whiteblacklist_ips);
@@ -1079,19 +1077,19 @@ class loginv2 {
 
     $stmt->execute();
 
-    list($exists) = $stmt->fetch(PDO::FETCH_NUM);
+    $exists = $stmt->fetch(PDO::FETCH_COLUMN);
 
     if (!$exists) {
 
       // check inactive_timeout specificially if the session check fails (slightly faster in most cases)
       if ($this->config['inactive_logout']) {
 
-        $stmt = $this->db->prepare('SELECT `lastview` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid');
+        $stmt = $this->db->prepare('SELECT `lastview` FROM `'.$this->config['user_table'].'` WHERE `id` = :userid LIMIT 1');
         $stmt->bindParam(':userid', $_SESSION[$this->config['session_key']]['userid'], PDO::PARAM_INT);
 
         $stmt->execute();
 
-        list($lastview) = $stmt->fetch(PDO::FETCH_NUM);
+        $lastview = $stmt->fetch(PDO::FETCH_COLUMN);
 
         if ($lastview <= time() - $this->config['inactive_timeout']) {
 
@@ -1223,9 +1221,7 @@ class loginv2 {
 
     $stmt->execute();
 
-    list($exists) = $stmt->fetch(PDO::FETCH_NUM);
-
-    return ($exists == 1);
+    return ($stmt->fetch(PDO::FETCH_COLUMN) == 1);
 
   }
 
@@ -1477,9 +1473,7 @@ class loginv2 {
 
     $stmt->execute();
 
-    list($badlogincount) = $stmt->fetch(PDO::FETCH_NUM);
-
-    return ($badlogincount < $this->config['badlogin_limit']);
+    return ($stmt->fetch(PDO::FETCH_COLUMN) < $this->config['badlogin_limit']);
 
   }
 
@@ -1602,13 +1596,13 @@ class loginv2 {
 
     // check whilelist first
     $stmt = $this->db->query('SELECT EXISTS(SELECT * FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::WHITELISTED_IP.')');
-    list($whitelist_exists) = $stmt->fetch(PDO::FETCH_NUM);
+    $whitelist_exists = $stmt->fetch(PDO::FETCH_COLUMN);
 
     if ($whitelist_exists == 1) {                                               // if there are whitelisted IPs, then the given IP must be in that list
       $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::WHITELISTED_IP);
 
       $block = true;                                                            // if there are whitelisted IPs, then the given IP must be in that list
-      while ((list($check_ip) = $stmt->fetch(PDO::FETCH_NUM)) && $block) {
+      while (($check_ip = $stmt->fetch(PDO::FETCH_COLUMN)) && $block) {
 
         if (fnmatch($check_ip, $ip))                                            // found in list
           $block = false;
@@ -1622,7 +1616,7 @@ class loginv2 {
 
     // check blacklist
     $stmt = $this->db->query('SELECT `ip` FROM `'.$this->config['ip_table'].'` WHERE `type` = '.$this::BLACKLISTED_IP);
-    while (list($check_ip) = $stmt->fetch(PDO::FETCH_NUM)) {
+    while ($check_ip = $stmt->fetch(PDO::FETCH_COLUMN)) {
 
       if (fnmatch($check_ip, $ip))                                              // found in list
         return false;
