@@ -1,8 +1,8 @@
 <?PHP
 /***** Backup Databases *********************************************************
  *                                                                              *
- * Version: 1.0.0                                                               *
- * Date: September 27, 2016                                                     *
+ * Version: 1.0.1                                                               *
+ * Date: October 19, 2016                                                       *
  *                                                                              *
  * Requires PHP 5.3 or higher and a PDO connection to a MySQL database.         *
  * Probably if the strict_type and hints were removed, and the                  *
@@ -93,7 +93,7 @@ class backup_databases {
   public function backup_database (pdo &$db, $tables_to_backup = '*', $structure_only_tables = array()): bool {
 
     $stmt = $db->query('SELECT DATABASE()');
-    list($dbname) = $stmt->fetch(PDO::FETCH_NUM);                                                 // get database name
+    $dbname = $stmt->fetch(PDO::FETCH_COLUMN);                                                    // get database name
 
     if (!$this->table_list($db, $tables_to_backup))                                               // get list of tables to look through/backup
       return false;
@@ -213,8 +213,7 @@ class backup_databases {
       case $table_list == '*':                                                                    // if wildcard, get all tables
         $table_list = array();
         $stmt = $db->query('SHOW TABLES');
-        while (list($table) = $stmt->fetch(PDO::FETCH_NUM))                                       // fetch all tables from database
-          $table_list[] = $table;
+        $table_list = $stmt->fetchAll(PDO::FETCH_COLUMN);                                         // fetch all tables from database
 
         if (count($table_list) == 0)
           return false;
