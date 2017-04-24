@@ -1,8 +1,8 @@
 <?PHP
 /***** Backup Databases *********************************************************
  *                                                                              *
- * Version: 1.0.2                                                               *
- * Date: April 21, 2017                                                         *
+ * Version: 1.0.3                                                               *
+ * Date: April 24, 2017                                                         *
  *                                                                              *
  * Requires PHP 5.3 or higher and a PDO connection to a MySQL database.         *
  * Probably if the strict_type and hints were removed, and the                  *
@@ -39,15 +39,17 @@
  * Settings can be changed, such as where the files are saved to, what type of  *
  * linebreak the files should have, whether or not the database backups should  *
  * be in their own subdirectories, if the output file should be compressed, and *
- * how often INSERT commands should be broken up.                               *
+ * how often INSERT commands should be broken up, and more. Read the comments   *
+ * for all the public variables in the class for more information.              *
  *                                                                              *
  * Some additional notes:                                                       *
  *   * When a table is created, the AUTO_INCREMENT values are maintained, even  *
  *     if the table is backed up as "structure only".                           *
  *   * NULL Values are maintained (a somewhat uncommon feature of PHP database  *
  *     backups).                                                                *
- *   * The program is untested with foreign characters, but it may work since   *
+ *   * The program is untested with high ANSI characters, but it may work since *
  *     outputed strings are escaped.                                            *
+ *   * There has been no testing with foreign key contraints.                   *
  *                                                                              *
  * Change Log:                                                                  *
  *   1.0.0 (28 Sep 2016): Initial release.                                      *
@@ -56,6 +58,7 @@
  *     Added support for backing up triggers.                                   *
  *     Added support for non-default delimiters.                                *
  *     Added ability to change archive_info_filename.                           *
+ *   1.0.3 (24 Apr 2017): Added support for foreign key constraints.            *
  *                                                                              *
  *                                                                              *
  * EXAMPLE USE:                                                                 *
@@ -71,7 +74,7 @@
  *                                                                              *
  * // backup more databases by running the following 4 lines, and only changing *
  * // the $db_conn to a different database                                      *
- * if ($backup_dbs->backup_database($db_conn)) // perform backup                *
+ * if ($backup_dbs->backup_database($pdo_db_conn)) // perform backup            *
  *   echo 'New backup created.'; // Success!                                    *
  * else                                                                         *
  *   echo 'No new backup.'; // either data was the same, or there was an error  *
@@ -81,6 +84,7 @@ declare(strict_types=1);
 
 class backup_databases {
 
+  private $Version = '1.0.3';
 
   public $save_location = 'C:/db-archives/';    // Requires ending slash ("/"). Best if absolute location.
   public $date_format = 'Y-m-d';                // PHP date() format - this is appended to the file name. This can be used to manage how long old backups are stored, and other overwrting features (if you get createive).
@@ -89,12 +93,16 @@ class backup_databases {
   public $use_database_subdirectory = true;     // Place output file in a subdirectory, the subdirectory's name will be the name of the database
   public $compress = true;                      // Use GZIP to compress each database.
   public $value_sets_between_inserts = 1000;    // Breaking up INSERTs can be useful on very large tables, use this value to adjust how often values in an INSERT are broken into separate SQL commands
+  public $backup_foreign_keys = true;           // Foreign key constraints are removed from the CREATE TABLES script to prevent conflicts, this setting determines weather they are added back in at the end of the file or not (note: even tables in the $structure_only_tables will have their foreign key constraints backed up)
   public $backup_triggers = true;               // Add a query at the end of all inserts with all triggers for each database (note: even tables in the $structure_only_tables will have their triggers backed up)
   public $default_delimiter = ';';              // Add a default delimieter to the file, I can't foresee a reason this should be anything other than ";", but maybe someone will find a reason
   public $trigger_delimiter = '$$';             // Delimiter for trigger section, it can be anything as long as it is not ';' and not something that will come up in triggers and queries
 
-  // these shouldn't need to be changed between uses, should be constants, but can't
+  // these shouldn't need to be changed between uses, should probably be constants
   protected $num_native_types = array('NEWDECIMAL' => 1, 'FLOAT' => 1, 'DOUBLE' => 1, 'TINY' => 1, 'LONG' => 1, 'LONGLONG' => 1, 'INT24' => 1, 'SHORT' => 1); // MySQL PDO types that correspond to numbers (they don't require quotes "" during insertion)
+
+
+  private $foreign_keys = array();              // store foreign key constraints (removed from the CREATE TABLE string and appended to the end of the file to prevent conflicts)
 
 
   // Backup a database
@@ -116,17 +124,24 @@ class backup_databases {
 
     $this->table_list($db, $structure_only_tables);                                               // get list of tables which only the structure will be backed up
 
+    $this->foreign_keys = array();                                                                // clear any foreign key constraints (incase the same object is used to backup multiple databases)
+
 
     // create a header for the SQL file
     $return  = '--' . $this->nl;
     $return .= '-- DB Archive/Backup' . $this->nl;
-    $return .= '-- Backup generated by a script created by Brandon Nimon' . $this->nl;
+    $return .= '-- Backup generated by Backup Databases Script v' . $this->Version . $this->nl;
+    $return .= '-- Script written by Brandon Nimon' . $this->nl;
     $return .= '-- Git: https://github.com/bobbfwed/commonfuncs' . $this->nl;
     $return .= '--' . $this->nl;
     $return .= '-- DB Name: ' . $dbname . $this->nl;
     $return .= '--' . $this->nl . $this->nl;
-    $return .= 'DELIMITER ' . $this->default_delimiter . $this->nl . $this->nl . $this->nl;       // set delimiter
+    $return .= 'DELIMITER ' . $this->default_delimiter . $this->nl . $this->nl;                   // set delimiter
 
+    // a header for this section
+    $return .= '--' . $this->nl;
+    $return .= '-- Create Tables' . $this->nl;
+    $return .= '--' . $this->nl . $this->nl;
 
     for ($table_idx = 0; $table_idx < count($tables_to_backup); $table_idx++) {                   // cycle through all of the tables
 
@@ -136,6 +151,10 @@ class backup_databases {
 
       $createtable_stmt = $db->query('SHOW CREATE TABLE `'.$table.'`');
       list($tablename, $createtable) = $createtable_stmt->fetch(PDO::FETCH_NUM);
+
+      $createtable = str_replace(array("\r\n", "\r", "\n"), $this->nl, $createtable);             // standardize new lines for CREATE TABLE script
+      $createtable = $this->remove_foreign_key_constraints($tablename, $createtable);             // remove foreign key constraints and store them in $this->foreign_keys to add them near the very end of the file
+
       $return .= $this->nl . $this->nl . $createtable . $this->default_delimiter;                 // add create table string -- this is all that is needed for struction only tables
 
       if (!in_array($table, $structure_only_tables)) {                                            // if the current table is not in the structure only list, then get data too
@@ -143,10 +162,12 @@ class backup_databases {
         $alloftable_stmt = $db->query('SELECT * FROM `'.$table.'`');                              // get all contents
         $num_fields = $alloftable_stmt->columnCount();                                            // get number of columns
 
-        $columnnames_stmt = $db->query('SHOW COLUMNS FROM `'.$table.'`');
+        $columnnames_stmt = $db->query('SHOW COLUMNS FROM `'.$table.'`');                         // get the list of columns/fields
         $column_str = '';
-        while ($column = $columnnames_stmt->fetch(PDO::FETCH_ASSOC))
+
+        while ($column = $columnnames_stmt->fetch(PDO::FETCH_ASSOC))                              // add each column/field
           $column_str .= '`'.$column['Field'].'`,';
+
         $column_str = substr($column_str, 0, -1);
 
         $column_int = array();                                                                    // create array that will track if a specified column is an integer value (does not require quotes)
@@ -212,12 +233,16 @@ class backup_databases {
 
       }
 
-      $return .= $this->nl . $this->nl . $this->nl;                                               // add some padding
+      $return .= $this->nl . $this->nl . $this->nl;
 
     }
 
+
     if ($this->backup_triggers)
-      $return .= $this->backup_triggers_by_table($db, $tables_to_backup);
+      $return .= $this->backup_triggers_by_table($db, $tables_to_backup);                         // put trigger in near the end of the file
+
+    if ($this->backup_foreign_keys)
+      $return .= $this->backup_foreign_key_constraints();                                         // put foreign key constraints back in at the end of the file here
     
     return $this->write_file($dbname, $return);
 
@@ -260,9 +285,71 @@ class backup_databases {
   }
 
 
+  // Remove foreign key constraints from a CREATE TABLE script, since running constraint commands when all the tables have not been created and populated will likely cause conflicts
+  // $tablename is the name of the table currently being processed
+  // $createtable is the CREATE TABLE script generated by the database
+  private function remove_foreign_key_constraints (string $tablename, string $createtable): string {
+
+    $createtable_lines = explode($this->nl, $createtable);                                        // break create table script into individual lines
+    $createtable_lines_without_triggers = array();                                                // create new array to hold the create table script with the foreign key constraints removed (since having them all at the top would cause conflicts more often than not)
+    $first_constraint = true;
+
+    for ($i = 0; $i < count($createtable_lines); $i++) {                                          // go through each line of the CREATE TABLE script
+
+      if (stripos($createtable_lines[$i], 'CONSTRAINT') !== false) {                              // if this line is a foreign key constraint command
+        
+        $this->foreign_keys[$tablename][] = trim($createtable_lines[$i]);                         // set the constraint asside for later
+
+        if ($first_constraint) {                                                                  // if it's the first constraint
+
+          $first_constraint = false;
+          $createtable_lines_without_triggers[$i - 1] = substr($createtable_lines_without_triggers[$i - 1], 0, -1); // remove the comma from the previous command in the CREATE TABLE script
+
+        } else
+          $this->foreign_keys[$tablename][count($this->foreign_keys[$tablename]) - 2] = substr($this->foreign_keys[$tablename][count($this->foreign_keys[$tablename]) - 2], 0, -1); // remove the comma from the previous constraint
+
+      } else
+        $createtable_lines_without_triggers[] = $createtable_lines[$i];                           // if the line does not contain a constraint command, store to "output" array
+
+    }
+
+    return implode($this->nl, $createtable_lines_without_triggers);                               // return the CREATE TABLE script sans foreign key constraints
+
+  }
+
+
+  // Return in SQL format any foreign key constraint commands that were setup asside earlier
+  private function backup_foreign_key_constraints (): string {
+
+    if (count($this->foreign_keys) > 0) {                                                         // if there are any foreign key constraints in this database
+
+      // a header for this section
+      $return  = $this->nl . '--' . $this->nl;
+      $return .= '-- Foreign Key Constraints' . $this->nl;
+      $return .= '--' . $this->nl . $this->nl;
+
+      foreach($this->foreign_keys as $table => $constraints) {                                    // go through each table that has constraints
+
+        $return .= '-- Table: ' . $table . $this->nl;                                             // label it
+
+        for ($i = 0; $i < count($constraints); $i++)                                              // go through all constraints for this table
+          $return .= 'ALTER TABLE `' . $table . '` ADD ' . $constraints[$i] . $this->default_delimiter . $this->nl;
+
+        $return .= $this->nl;
+
+      }
+
+      return $return . $this->nl;
+
+    }
+
+    return '';                                                                                    // no constraints in this database
+
+  }
+
+
   // create trigger creation string
   // return string back to parent
-  // $this->trigger_delimiter can be anything as long as it's not ; or something else that will come up during a mySQL procedure
   private function backup_triggers_by_table (pdo &$db, &$table_list): string {
 
     // a header for this section
@@ -304,7 +391,7 @@ class backup_databases {
       mkdir($dirname, 0777, true);                                                                // 0777 mode is ignored on windows
 
     if (file_exists($dirname . $this->archive_info_filename))
-      $lastmd5 = file($dirname . $this->archive_info_filename)[1];                                      // get last backup's MD5
+      $lastmd5 = file($dirname . $this->archive_info_filename)[1];                                // get last backup's MD5
 
     else
       $lastmd5 = false;                                                                           // force file save if info file does not exist
@@ -332,7 +419,7 @@ class backup_databases {
 
     }
 
-    return false;
+    return false;                                                                                 // file is the same as it was before
 
   }
 
