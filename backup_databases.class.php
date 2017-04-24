@@ -49,7 +49,6 @@
  *     backups).                                                                *
  *   * The program is untested with high ANSI characters, but it may work since *
  *     outputed strings are escaped.                                            *
- *   * There has been no testing with foreign key contraints.                   *
  *                                                                              *
  * Change Log:                                                                  *
  *   1.0.0 (28 Sep 2016): Initial release.                                      *
