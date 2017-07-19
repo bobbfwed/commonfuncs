@@ -1,8 +1,8 @@
 <?PHP
 /***** Backup Databases *********************************************************
  *                                                                              *
- * Version: 1.0.3                                                               *
- * Date: April 24, 2017                                                         *
+ * Version: 1.0.4                                                               *
+ * Date: July 19, 2017                                                          *
  *                                                                              *
  * Requires PHP 5.3 or higher and a PDO connection to a MySQL database.         *
  * Probably if the strict_type and hints were removed, and the                  *
@@ -58,6 +58,7 @@
  *     Added support for non-default delimiters.                                *
  *     Added ability to change archive_info_filename.                           *
  *   1.0.3 (24 Apr 2017): Added support for foreign key constraints.            *
+ *   1.0.4 (19 Jul 2017): Changed trigger definer to CURRENT_USER               *
  *                                                                              *
  *                                                                              *
  * EXAMPLE USE:                                                                 *
@@ -90,7 +91,7 @@ class backup_databases {
   public $nl = "\n";                            // Output file's line break / new line (this does not affect MySQL queries) -- generally: "\n" = UNIX, "\r" = Mac, or "\r\n" = Windows
   public $archive_info_filename = 'info.txt';   // A file to store information about the latest archive (such as timestamp and md5 of the backup), file is stored in the same directory as the backup, and is overwritten when each new backup is created
   public $use_database_subdirectory = true;     // Place output file in a subdirectory, the subdirectory's name will be the name of the database
-  public $compress = true;                      // Use GZIP to compress each database.
+  public $compress = true;                      // Use GZIP to compress each file
   public $value_sets_between_inserts = 1000;    // Breaking up INSERTs can be useful on very large tables, use this value to adjust how often values in an INSERT are broken into separate SQL commands
   public $backup_foreign_keys = true;           // Foreign key constraints are removed from the CREATE TABLES script to prevent conflicts, this setting determines weather they are added back in at the end of the file or not (note: even tables in the $structure_only_tables will have their foreign key constraints backed up)
   public $backup_triggers = true;               // Add a query at the end of all inserts with all triggers for each database (note: even tables in the $structure_only_tables will have their triggers backed up)
@@ -365,7 +366,7 @@ class backup_databases {
       for ($i = 0; $i < count($triggers); $i++) {                                                 // cycle through all triggers for this table
 
         $return .= 'DROP TRIGGER IF EXISTS `' . $triggers[$i]['Trigger'] . '`' . $this->trigger_delimiter . $this->nl;
-        $return .= 'CREATE DEFINER=`' . $triggers[$i]['Definer'] . '` TRIGGER `' . $triggers[$i]['Trigger'] . '` ' . $triggers[$i]['Timing'] . ' ' . $triggers[$i]['Event'] . ' ON `' . $triggers[$i]['Table'] . '` FOR EACH ROW ' . $this->nl;
+        $return .= 'CREATE DEFINER=CURRENT_USER TRIGGER `' . $triggers[$i]['Trigger'] . '` ' . $triggers[$i]['Timing'] . ' ' . $triggers[$i]['Event'] . ' ON `' . $triggers[$i]['Table'] . '` FOR EACH ROW ' . $this->nl;
         $return .= $triggers[$i]['Statement'] . $this->trigger_delimiter . $this->nl . $this->nl . $this->nl;
 
       }
