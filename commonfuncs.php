@@ -5,7 +5,7 @@
  * bnimon@gmail.com
  * www.nimonpro.com
  *   
- * (C) 2016 Brandon Nimon
+ * (C) 2017 Brandon Nimon
  ******************************************************************************/
 
 /***** FUNCTIONS I AM OFTEN LOOKING FOR ****************************************
@@ -477,6 +477,67 @@ function password_strength (password, minlength) {
 
 
 /*******************************************************************************
+* A class for timing PHP events.                                               *
+********************************************************************************
+* restart ()                                                                   *
+* pause ()                                                                     *
+* resume ()                                                                    *
+* time ()                                                                      *
+*******************************************************************************/
+class timer {
+
+  public $starttime = false; // holds the start time of the timer -- false means there is no timer
+  public $pausetime = false; // holds the time the timer was puased at -- false means the timer is not paused
+
+  // start the timer when the object is declaired
+  public function __construct () {
+
+    $this->starttime = microtime(true);
+
+  }
+
+  // restart the timer (returns previous timer's elapse time)
+  public function restart () {
+
+    $return = $this->time();
+    $this->starttime = microtime(true);
+    $this->pausetime = false;
+    return $return;
+
+  }
+
+  // pause the timer
+  public function pause () {
+
+    if ($this->pausetime === false) // only if the timer isn't currently paused
+      $this->pausetime = microtime(true);
+
+  }
+
+  // resume a paused timer
+  public function resume () {
+
+    if ($this->pausetime !== false) { // only if the timer is currently paused
+      $this->starttime += microtime(true) - $this->pausetime;
+      $this->pausetime = false;
+    }
+
+  }
+
+  // get how much time has elapsed
+  public function time () {
+
+    if ($this->pausetime === false) // if the timer is not paused
+      return microtime(true) - $this->starttime; // return the total elapsed time
+    else
+      return $this->pausetime - $this->starttime; // return the time when the timer was paused
+
+  }
+
+}
+
+
+/*******************************************************************************
 * Common mySQL functions.                                                      *
 ********************************************************************************
 * myquery ($query, $line, $do_die = false)                                     *
@@ -731,7 +792,7 @@ class images {
 * Little script to search and/or replace strings in all PHP files in current   *
 * directory.                                                                   *
 ********************************************************************************
-* searchreplace()                                                              *
+* searchreplace ()                                                             *
 *******************************************************************************/
 class searchreplace {
 
